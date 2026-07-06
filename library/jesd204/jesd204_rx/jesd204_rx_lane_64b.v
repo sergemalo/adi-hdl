@@ -45,29 +45,29 @@ module jesd204_rx_lane_64b #(
   output reg [7:0] status_lane_skew
 );
 
-  reg  [11:0] crc12_calculated_prev;
+  (* MARK_DEBUG = "TRUE" *) reg  [11:0] crc12_calculated_prev;
 
   wire [63:0] phy_data_r;
-  wire [11:0] crc12_received_r;
+  (* MARK_DEBUG = "TRUE" *) wire [11:0] crc12_received_r;
   wire [63:0] data_descrambled_s;
   wire [63:0] data_descrambled;
   wire [63:0] data_descrambled_reordered;
-  wire [11:0] crc12_received;
-  wire [11:0] crc12_calculated;
+  (* MARK_DEBUG = "TRUE" *) wire [11:0] crc12_received;
+  (* MARK_DEBUG = "TRUE" *) wire [11:0] crc12_calculated;
 
-  wire event_invalid_header;
-  wire event_unexpected_eomb;
-  wire event_unexpected_eoemb;
-  wire event_crc12_mismatch;
-  wire event_fec_trapped_error_flag;
-  wire event_fec_untrapped_error_flag;
-  wire err_cnt_rst;
+  (* MARK_DEBUG = "TRUE" *) wire event_invalid_header;
+  (* MARK_DEBUG = "TRUE" *) wire event_unexpected_eomb;
+  (* MARK_DEBUG = "TRUE" *) wire event_unexpected_eoemb;
+  (* MARK_DEBUG = "TRUE" *) wire event_crc12_mismatch;
+  (* MARK_DEBUG = "TRUE" *) wire event_fec_trapped_error_flag;
+  (* MARK_DEBUG = "TRUE" *) wire event_fec_untrapped_error_flag;
+  (* MARK_DEBUG = "TRUE" *) wire err_cnt_rst;
 
   wire [63:0] rx_data_msb_s;
 
-  wire eomb;
-  wire eoemb;
-  wire eomb_r;
+  (* MARK_DEBUG = "TRUE" *) wire eomb;
+  (* MARK_DEBUG = "TRUE" *) wire eoemb;
+  (* MARK_DEBUG = "TRUE" *) wire eomb_r;
   wire valid_fec;
   wire [25:0] fec_received;
   wire fec_en;
@@ -83,7 +83,9 @@ module jesd204_rx_lane_64b #(
 
   wire [7:0] sh_count;
 
-  jesd204_rx_header i_rx_header (
+  jesd204_rx_header #(
+    .ENABLE_FEC (ENABLE_FEC)
+  ) i_rx_header (
     .clk(clk),
     .reset(reset),
 
@@ -161,11 +163,9 @@ module jesd204_rx_lane_64b #(
 
   assign err_cnt_rst = reset || ctrl_err_statistics_reset;
 
-  assign fec_en = (cfg_header_mode == 2'd2);
-
   if(ENABLE_FEC) begin : gen_fec
     jesd204_fec_decode #(
-        .DATA_WIDTH     (64)
+      .DATA_WIDTH (64)
     ) jesd204_fec_decode (
       .data_out              (fec_data_out),
       .data_out_valid        (fec_data_out_valid),
@@ -179,15 +179,21 @@ module jesd204_rx_lane_64b #(
       .data_in               (phy_data)
     );
 
+    assign fec_en = cfg_header_mode == 2'd2;
     assign scram_data_in = fec_en ? fec_data_out : phy_data;
     assign event_fec_trapped_error_flag = fec_en && fec_trapped_error_flag;
     assign event_fec_untrapped_error_flag = fec_en && fec_untrapped_error_flag;
   end else begin : gen_no_fec
     assign scram_data_in = phy_data;
+    assign fec_en = 1'b0;
+    assign fec_trapped_error_flag = 1'b0;
+    assign fec_untrapped_error_flag = 1'b0;
+    assign event_fec_trapped_error_flag = 1'b0;
+    assign event_fec_untrapped_error_flag = 1'b0;
   end
 
   error_monitor #(
-  .EVENT_WIDTH(6),
+    .EVENT_WIDTH(6),
     .CNT_WIDTH(32)
   ) i_error_monitor (
     .clk(clk),
