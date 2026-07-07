@@ -12,6 +12,7 @@ M_DEPS += ../../common/zc702/zc702_system_constr.xdc
 M_DEPS += ../../common/zc702/zc702_system_bd.tcl
 M_DEPS += ../../../library/common/ad_iobuf.v
 M_DEPS += ../../../library/axi_ad9361/axi_ad9361_delay.tcl
+M_DEPS += iq_override.v
 
 LIB_DEPS += axi_ad9361
 LIB_DEPS += axi_clkgen

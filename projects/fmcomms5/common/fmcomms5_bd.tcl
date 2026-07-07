@@ -174,9 +174,17 @@ ad_connect util_ad9361_divclk_reset/peripheral_reset util_ad9361_adc_pack/reset
 ad_connect util_ad9361_adc_fifo/dout_valid_0 util_ad9361_adc_pack/fifo_wr_en
 ad_connect util_ad9361_adc_pack/fifo_wr_overflow util_ad9361_adc_fifo/dout_ovf
 
+#for {set i 0} {$i < 8} {incr i} {
+#  ad_connect util_ad9361_adc_fifo/dout_enable_$i util_ad9361_adc_pack/enable_$i
+#  ad_connect util_ad9361_adc_fifo/dout_data_$i util_ad9361_adc_pack/fifo_wr_data_$i
+#}
+
+create_bd_cell -type module -reference iq_override iq_override_0
+
 for {set i 0} {$i < 8} {incr i} {
   ad_connect util_ad9361_adc_fifo/dout_enable_$i util_ad9361_adc_pack/enable_$i
-  ad_connect util_ad9361_adc_fifo/dout_data_$i util_ad9361_adc_pack/fifo_wr_data_$i
+  ad_connect util_ad9361_adc_fifo/dout_data_$i iq_override_0/din_$i
+  ad_connect iq_override_0/dout_$i util_ad9361_adc_pack/fifo_wr_data_$i
 }
 
 # adc-path dma

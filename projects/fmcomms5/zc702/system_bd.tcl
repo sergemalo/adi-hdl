@@ -18,6 +18,9 @@ ad_ip_parameter sys_ps7 CONFIG.PCW_FPGA2_PERIPHERAL_FREQMHZ 150.0
 
 ad_connect sys_dma_clk sys_ps7/FCLK_CLK2
 set sys_dma_clk [get_bd_nets sys_dma_clk]
+# Custom RTL must be in the project + compile-ordered before the BD references it
+add_files -norecurse -fileset sources_1 iq_override.v
+update_compile_order -fileset sources_1
 source ../common/fmcomms5_bd.tcl
 
 ad_ip_parameter axi_ad9361_0 CONFIG.ADC_INIT_DELAY 24
