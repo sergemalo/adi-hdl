@@ -1,3 +1,17 @@
+READEME by Serge Malo
+
+## ZYNQ ZC702 + FMCOMMS5 Project
+### How to build
+Make sure Vivado GUI app is closed.
+In a terminal:
+1. cd to ./zc702
+2. source ./adi_build_env.sh
+3. make
+
+
+
+---
+(Original READEME from ADI)
 # FMCOMMS5 HDL Project
 
 Here are some pointers to help you:
