@@ -23,6 +23,21 @@ add_files -norecurse -fileset sources_1 iq_override.v
 update_compile_order -fileset sources_1
 source ../common/fmcomms5_bd.tcl
 
+# --- Runtime I/Q override control (AXI GPIO) ---
+ad_ip_instance axi_gpio axi_iq_ctrl
+puts "GPIO pins: [get_bd_pins -of_objects [get_bd_cells axi_iq_ctrl] -filter {DIR == O}]"
+ad_ip_parameter axi_iq_ctrl CONFIG.C_IS_DUAL       1
+ad_ip_parameter axi_iq_ctrl CONFIG.C_ALL_OUTPUTS   1
+ad_ip_parameter axi_iq_ctrl CONFIG.C_ALL_OUTPUTS_2 1
+ad_ip_parameter axi_iq_ctrl CONFIG.C_GPIO_WIDTH    32
+ad_ip_parameter axi_iq_ctrl CONFIG.C_GPIO2_WIDTH   1
+
+ad_cpu_interconnect 0x79060000 axi_iq_ctrl
+
+ad_connect axi_iq_ctrl/gpio_io_o  iq_override_0/ctrl_iq
+ad_connect axi_iq_ctrl/gpio2_io_o iq_override_0/override_en
+ad_connect util_ad9361_divclk/clk_out iq_override_0/clk
+
 ad_ip_parameter axi_ad9361_0 CONFIG.ADC_INIT_DELAY 24
 ad_ip_parameter axi_ad9361_1 CONFIG.ADC_INIT_DELAY 24
 ad_ip_parameter axi_ad9361_adc_dma CONFIG.AXI_SLICE_DEST 1

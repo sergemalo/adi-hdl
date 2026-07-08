@@ -149,3 +149,6 @@ set_property  -dict {PACKAGE_PIN  D15   IOSTANDARD LVCMOS25} [get_ports gpio_bd[
 set_property  -dict {PACKAGE_PIN  W17   IOSTANDARD LVCMOS25} [get_ports gpio_bd[14]]                            ; ## PMOD1_2_LS
 set_property  -dict {PACKAGE_PIN  W5    IOSTANDARD LVCMOS25} [get_ports gpio_bd[15]]                            ; ## PMOD1_3_LS
 
+# GPIO config regs (clk_fpga_0) -> iq_override sync regs (clk_div_sel_1_s).
+# Genuinely async, synchronized in RTL. Don't time the crossing.
+set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks clk_div_sel_1_s]
