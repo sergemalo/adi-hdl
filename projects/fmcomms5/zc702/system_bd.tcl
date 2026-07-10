@@ -18,10 +18,22 @@ ad_ip_parameter sys_ps7 CONFIG.PCW_FPGA2_PERIPHERAL_FREQMHZ 150.0
 
 ad_connect sys_dma_clk sys_ps7/FCLK_CLK2
 set sys_dma_clk [get_bd_nets sys_dma_clk]
+
 # Custom RTL must be in the project + compile-ordered before the BD references it
+# IQ_OVERRIDE
 add_files -norecurse -fileset sources_1 iq_override.v
+# FIR
+add_files -norecurse  -fileset sources_1 [list \
+  "$ad_hdl_dir/library/common/up_axi.v" \
+  "axi_fir_ctrl.v"]
+
 update_compile_order -fileset sources_1
 source ../common/fmcomms5_bd.tcl
+
+## FIR
+create_bd_cell -type module -reference axi_fir_ctrl axi_fir_ctrl
+ad_cpu_interconnect 0x79070000 axi_fir_ctrl
+## FIR
 
 # --- Runtime I/Q override control (AXI GPIO) ---
 ad_ip_instance axi_gpio axi_iq_ctrl
