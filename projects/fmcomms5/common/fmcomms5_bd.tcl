@@ -174,6 +174,7 @@ ad_connect util_ad9361_divclk_reset/peripheral_reset util_ad9361_adc_pack/reset
 ad_connect util_ad9361_adc_fifo/dout_valid_0 util_ad9361_adc_pack/fifo_wr_en
 ad_connect util_ad9361_adc_pack/fifo_wr_overflow util_ad9361_adc_fifo/dout_ovf
 
+### Intereception of the ADC data path for I/Q override and FIR processing
 #for {set i 0} {$i < 8} {incr i} {
 #  ad_connect util_ad9361_adc_fifo/dout_enable_$i util_ad9361_adc_pack/enable_$i
 #  ad_connect util_ad9361_adc_fifo/dout_data_$i util_ad9361_adc_pack/fifo_wr_data_$i
@@ -186,6 +187,15 @@ for {set i 0} {$i < 8} {incr i} {
   ad_connect util_ad9361_adc_fifo/dout_data_$i iq_override_0/din_$i
   ad_connect iq_override_0/dout_$i util_ad9361_adc_pack/fifo_wr_data_$i
 }
+
+create_bd_cell -type module -reference fir_i0 fir_i0_0
+ad_disconnect iq_override_0/dout_0 util_ad9361_adc_pack/fifo_wr_data_0
+ad_disconnect iq_override_0/dout_1 util_ad9361_adc_pack/fifo_wr_data_1
+ad_connect iq_override_0/dout_0 fir_i0_0/din
+ad_connect fir_i0_0/dout_fir util_ad9361_adc_pack/fifo_wr_data_0
+ad_connect fir_i0_0/dout_ref util_ad9361_adc_pack/fifo_wr_data_1
+ad_connect util_ad9361_divclk/clk_out fir_i0_0/clk
+ad_connect util_ad9361_adc_fifo/dout_valid_0 fir_i0_0/valid
 
 # adc-path dma
 

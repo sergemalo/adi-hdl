@@ -25,15 +25,16 @@ add_files -norecurse -fileset sources_1 iq_override.v
 # FIR
 add_files -norecurse  -fileset sources_1 [list \
   "$ad_hdl_dir/library/common/up_axi.v" \
-  "axi_fir_ctrl.v"]
-
+  "axi_fir_ctrl.v" \
+  "fir_i0.v" ]
 update_compile_order -fileset sources_1
 source ../common/fmcomms5_bd.tcl
 
-## FIR
+## FIR CTRL
 create_bd_cell -type module -reference axi_fir_ctrl axi_fir_ctrl
 ad_cpu_interconnect 0x79070000 axi_fir_ctrl
-## FIR
+ad_connect axi_fir_ctrl/coeff_flat fir_i0_0/coeff_flat
+## FIR CTRL
 
 # --- Runtime I/Q override control (AXI GPIO) ---
 ad_ip_instance axi_gpio axi_iq_ctrl
