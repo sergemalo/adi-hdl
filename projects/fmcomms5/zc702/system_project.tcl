@@ -8,6 +8,7 @@ source $ad_hdl_dir/projects/scripts/adi_project_xilinx.tcl
 source $ad_hdl_dir/projects/scripts/adi_board.tcl
 
 adi_project fmcomms5_zc702
+
 adi_project_files fmcomms5_zc702 [list \
   "system_top.v" \
   "system_constr.xdc"\
@@ -17,3 +18,6 @@ adi_project_files fmcomms5_zc702 [list \
 adi_project_run fmcomms5_zc702
 source $ad_hdl_dir/library/axi_ad9361/axi_ad9361_delay.tcl
 
+if {[get_property SLACK [get_timing_paths -setup]] < 0} {
+    error "TIMING FAILED: WNS [get_property SLACK [get_timing_paths -setup]] ns"
+}

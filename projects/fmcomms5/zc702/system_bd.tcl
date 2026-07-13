@@ -50,6 +50,7 @@ ad_cpu_interconnect 0x79060000 axi_iq_ctrl
 ad_connect axi_iq_ctrl/gpio_io_o  iq_override_0/ctrl_iq
 ad_connect axi_iq_ctrl/gpio2_io_o iq_override_0/override_en
 ad_connect util_ad9361_divclk/clk_out iq_override_0/clk
+ad_connect axi_fir_ctrl/coeff_frac fir_i0_0/coeff_frac
 
 ad_ip_parameter axi_ad9361_0 CONFIG.ADC_INIT_DELAY 24
 ad_ip_parameter axi_ad9361_1 CONFIG.ADC_INIT_DELAY 24

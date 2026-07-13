@@ -16,8 +16,9 @@
 //
 // Fixed point:
 //   din          signed DATA_WIDTH
-//   coefficients signed COEFF_WIDTH, COEFF_FRAC fractional bits (Q(CW-F).F)
-//   COEFF_FRAC = 0  ->  plain integer coefficients, no shift, no rounding
+//   coefficients signed COEFF_WIDTH, coeff_frac fractional bits (Q(CW-F).F)
+//   coeff_frac is a RUNTIME input (from axi_fir_ctrl), not a parameter.
+//   coeff_frac = 0  ->  plain integer coefficients, no shift, no rounding
 //
 // The output stage rounds to nearest (not truncate-toward-minus-infinity,
 // which would inject a DC bias) and saturates rather than wrapping.
@@ -33,13 +34,14 @@ module fir_i0 #(
   parameter NUM_COEFF   = 3,
   parameter DATA_WIDTH  = 16,
   parameter COEFF_WIDTH = 18,
-  parameter COEFF_FRAC  = 0
+  parameter FRAC_WIDTH  = 5      // width of the runtime coeff_frac field
 ) (
   input                                     clk,
   input                                     valid,
 
   input      signed [DATA_WIDTH-1:0]        din,
   input      [(NUM_COEFF*COEFF_WIDTH)-1:0]  coeff_flat,
+  input      [FRAC_WIDTH-1:0]               coeff_frac,   // runtime Q-format shift
 
   output     signed [DATA_WIDTH-1:0]        dout_fir,
   output     signed [DATA_WIDTH-1:0]        dout_ref,
@@ -56,10 +58,7 @@ module fir_i0 #(
   localparam ACC_WIDTH  = PROD_WIDTH + $clog2(NUM_COEFF);
 
   // stages: x -> p -> acc -> dout_fir_r
-  localparam LATENCY = 4;
-
-  // (1 << F) >> 1  ==  0 when F == 0, else 2^(F-1).  Round-to-nearest.
-  localparam RND = (1 << COEFF_FRAC) >> 1;
+  localparam LATENCY = 5;
 
   localparam signed [ACC_WIDTH-1:0] MAXV =  (1 <<< (DATA_WIDTH-1)) - 1;
   localparam signed [ACC_WIDTH-1:0] MINV = -(1 <<< (DATA_WIDTH-1));
@@ -139,8 +138,16 @@ module fir_i0 #(
   // With COEFF_FRAC = 0 this is a pure saturating truncation to DATA_WIDTH.
   // ---------------------------------------------------------------------
 
-  wire signed [ACC_WIDTH-1:0] acc_rnd = acc + RND;
-  wire signed [ACC_WIDTH-1:0] acc_scl = acc_rnd >>> COEFF_FRAC;
+  // Round-half-up then arithmetic shift, both driven by the runtime
+  // coeff_frac register:  rnd = 2^(coeff_frac - 1), or 0 when coeff_frac == 0.
+  // The variable >>> is a barrel shifter (LUTs, no DSP).
+  wire [ACC_WIDTH-1:0] one   = {{(ACC_WIDTH-1){1'b0}}, 1'b1};
+  wire [ACC_WIDTH-1:0] rnd_u = (coeff_frac == 0)
+                             ? {ACC_WIDTH{1'b0}}
+                             : (one << (coeff_frac - 1'b1));
+
+  wire signed [ACC_WIDTH-1:0] acc_rnd = acc + $signed(rnd_u);
+  wire signed [ACC_WIDTH-1:0] acc_scl = acc_rnd >>> coeff_frac;
 
   wire hi = (acc_scl > MAXV);
   wire lo = (acc_scl < MINV);
@@ -148,17 +155,16 @@ module fir_i0 #(
   reg signed [DATA_WIDTH-1:0] dout_fir_r;
   reg                         sat_r;
 
-  always @(posedge clk) begin
-    if (valid == 1'b1) begin
-      sat_r <= hi | lo;
-      if (hi == 1'b1) begin
-        dout_fir_r <= MAXV[DATA_WIDTH-1:0];
-      end else if (lo == 1'b1) begin
-        dout_fir_r <= MINV[DATA_WIDTH-1:0];
-      end else begin
-        dout_fir_r <= acc_scl[DATA_WIDTH-1:0];
-      end
-    end
+  // stage 4a: round + rescale (registered)
+  reg signed [ACC_WIDTH-1:0] acc_scl_r;
+  always @(posedge clk) if (valid) acc_scl_r <= (acc + $signed(rnd_u)) >>> coeff_frac;
+
+  // stage 4b: saturate (registered)
+  wire hi = (acc_scl_r > MAXV);
+  wire lo = (acc_scl_r < MINV);
+  always @(posedge clk) if (valid) begin
+    sat_r <= hi | lo;
+    dout_fir_r <= hi ? MAXV[DATA_WIDTH-1:0] : lo ? MINV[DATA_WIDTH-1:0] : acc_scl_r[DATA_WIDTH-1:0];
   end
 
   // ---------------------------------------------------------------------

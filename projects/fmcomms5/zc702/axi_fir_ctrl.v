@@ -7,6 +7,7 @@
 //
 //   0x000  ID        RO   reads 0x46495230 ("FIR0")
 //   0x004  SCRATCH   RW   free 32-bit register, write/read test
+//   0x008  CFG       RW   [4:0] coeff_frac (Q-format shift), rest reads 0
 //   0x040  COEFF[0]  RW   COEFF_WIDTH bits, zero-extended on read
 //   0x044  COEFF[1]  RW
 //   0x048  COEFF[2]  RW
@@ -31,6 +32,7 @@ module axi_fir_ctrl #(
   // coefficient outputs to the FIR datapath (s_axi_aclk domain)
   // leave unconnected until the FIR exists
   output [(NUM_COEFF*COEFF_WIDTH)-1:0]  coeff_flat,
+  output [4:0]                          coeff_frac,
 
   // axi4-lite slave interface
   (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axi, ASSOCIATED_RESET s_axi_aresetn" *)
@@ -99,7 +101,8 @@ module axi_fir_ctrl #(
   // Registers
   // ---------------------------------------------------------------------
 
-  reg [31:0]              up_scratch = 32'd0;
+  reg [31:0]              up_scratch     = 32'd0;
+  reg [ 4:0]              up_coeff_frac  = 5'd0;
   reg [COEFF_WIDTH-1:0]   up_coeff [0:NUM_COEFF-1];
 
   integer i;
@@ -107,8 +110,9 @@ module axi_fir_ctrl #(
   // write path
   always @(posedge up_clk) begin
     if (up_rstn == 1'b0) begin
-      up_wack    <= 1'b0;
-      up_scratch <= 32'd0;
+      up_wack       <= 1'b0;
+      up_scratch    <= 32'd0;
+      up_coeff_frac <= 5'd0;
       for (i = 0; i < NUM_COEFF; i = i + 1) begin
         up_coeff[i] <= {COEFF_WIDTH{1'b0}};
       end
@@ -117,6 +121,10 @@ module axi_fir_ctrl #(
 
       if ((up_wreq == 1'b1) && (up_waddr == 14'h001)) begin
         up_scratch <= up_wdata;
+      end
+
+      if ((up_wreq == 1'b1) && (up_waddr == 14'h002)) begin
+        up_coeff_frac <= up_wdata[4:0];
       end
 
       for (i = 0; i < NUM_COEFF; i = i + 1) begin
@@ -141,6 +149,8 @@ module axi_fir_ctrl #(
           up_rdata <= ID_VALUE;
         end else if (up_raddr == 14'h001) begin
           up_rdata <= up_scratch;
+        end else if (up_raddr == 14'h002) begin
+          up_rdata <= {27'd0, up_coeff_frac};
         end else if ((rd_coeff_sel == 1'b1) && (rd_coeff_idx < NUM_COEFF)) begin
           up_rdata <= {{(32-COEFF_WIDTH){1'b0}}, up_coeff[rd_coeff_idx]};
         end else begin
@@ -153,6 +163,8 @@ module axi_fir_ctrl #(
   // ---------------------------------------------------------------------
   // Flatten coefficients out to the datapath
   // ---------------------------------------------------------------------
+
+  assign coeff_frac = up_coeff_frac;
 
   genvar n;
   generate
