@@ -11,8 +11,9 @@
 //   assert (np.convolve(ref, h)[:len(fir)] == fir).all()      # for COEFF_FRAC = 0
 //
 // EVERY register in this module is enabled by `valid`, so LATENCY counts
-// sample beats, not clock cycles.  If you add or remove a pipeline stage,
-// LATENCY must be updated to match or the two lanes will skew.
+// sample beats, not clock cycles -- EXCEPT the active_sel synchronizer, which
+// must free-run (see below).  If you add or remove a pipeline stage in the
+// datapath, LATENCY must be updated to match or the two lanes will skew.
 //
 // Fixed point:
 //   din          signed DATA_WIDTH
@@ -23,10 +24,24 @@
 // The output stage rounds to nearest (not truncate-toward-minus-infinity,
 // which would inject a DC bias) and saturates rather than wrapping.
 //
-// CDC: coeff_flat is written in the s_axi_aclk domain and read here in the
-// `clk` domain.  Coefficients must be static while samples are streaming.
-// Add: set_false_path -from [get_cells .../up_coeff_reg*] -to [get_cells ...]
-// Double buffering removes this restriction; it is a later step.
+// DOUBLE BUFFERING / CDC:
+//   Two coefficient banks (coeff_flat0/1) arrive from axi_fir_ctrl in the
+//   s_axi_aclk domain.  active_sel (also s_axi_aclk) chooses which bank feeds
+//   the multipliers.  Only active_sel crosses into `clk`, through a 2-FF
+//   synchronizer; the wide banks are quasi-static (software only writes the
+//   INACTIVE bank, then flips active_sel) and cross via a false_path.
+//
+//   The bank mux is COMBINATIONAL, so LATENCY is unchanged and the reference
+//   lane stays aligned.  A single synchronized select drives all taps, so a
+//   given output sample uses an all-bank0 or all-bank1 set -- never a mix.
+//   Worst case a metastable select resolves one clock early/late, shifting
+//   WHEN the swap lands by one sample; it can never corrupt a coefficient.
+//
+//   Constraints (match your instance hierarchy):
+//     set_false_path -from [get_cells .../up_coeff0_reg* .../up_coeff1_reg*] \
+//                    -to   [get_cells .../g_unpack*]
+//     set_false_path -from [get_cells .../up_active_sel_reg*] \
+//                    -to   [get_cells .../sel_meta_reg*]
 
 `timescale 1ns/100ps
 
@@ -40,7 +55,9 @@ module fir_i0 #(
   input                                     valid,
 
   input      signed [DATA_WIDTH-1:0]        din,
-  input      [(NUM_COEFF*COEFF_WIDTH)-1:0]  coeff_flat,
+  input      [(NUM_COEFF*COEFF_WIDTH)-1:0]  coeff_flat0,  // bank 0 (s_axi_aclk)
+  input      [(NUM_COEFF*COEFF_WIDTH)-1:0]  coeff_flat1,  // bank 1 (s_axi_aclk)
+  input                                     active_sel,   // async: 0=bank0, 1=bank1
   input      [FRAC_WIDTH-1:0]               coeff_frac,   // runtime Q-format shift
 
   output     signed [DATA_WIDTH-1:0]        dout_fir,
@@ -57,7 +74,7 @@ module fir_i0 #(
   localparam PROD_WIDTH = DATA_WIDTH + COEFF_WIDTH;
   localparam ACC_WIDTH  = PROD_WIDTH + $clog2(NUM_COEFF);
 
-  // stages: x -> p -> acc -> dout_fir_r
+  // stages: x -> p -> acc -> acc_scl_r -> dout_fir_r
   localparam LATENCY = 5;
 
   localparam signed [ACC_WIDTH-1:0] MAXV =  (1 <<< (DATA_WIDTH-1)) - 1;
@@ -67,14 +84,34 @@ module fir_i0 #(
   genvar  n;
 
   // ---------------------------------------------------------------------
-  // Unpack coefficients.  coeff_flat[k] occupies bits [(k+1)*CW-1 : k*CW]
+  // active_sel synchronizer.  MUST free-run (no `valid` enable): a
+  // synchronizer clocked by an intermittent enable does not resolve
+  // metastability.  The mux it drives is combinational, so this adds no
+  // datapath latency.
   // ---------------------------------------------------------------------
 
-  wire signed [COEFF_WIDTH-1:0] c [0:NUM_COEFF-1];
+  (* ASYNC_REG = "TRUE" *) reg sel_meta = 1'b0;
+  (* ASYNC_REG = "TRUE" *) reg sel_sync = 1'b0;
+
+  always @(posedge clk) begin
+    sel_meta <= active_sel;
+    sel_sync <= sel_meta;
+  end
+
+  // ---------------------------------------------------------------------
+  // Unpack both banks and select.  coeff_flatX[k] occupies bits
+  // [(k+1)*CW-1 : k*CW].  One shared sel_sync -> all taps switch together.
+  // ---------------------------------------------------------------------
+
+  wire signed [COEFF_WIDTH-1:0] c0 [0:NUM_COEFF-1];
+  wire signed [COEFF_WIDTH-1:0] c1 [0:NUM_COEFF-1];
+  wire signed [COEFF_WIDTH-1:0] c  [0:NUM_COEFF-1];
 
   generate
     for (n = 0; n < NUM_COEFF; n = n + 1) begin: g_unpack
-      assign c[n] = coeff_flat[((n+1)*COEFF_WIDTH)-1 : n*COEFF_WIDTH];
+      assign c0[n] = coeff_flat0[((n+1)*COEFF_WIDTH)-1 : n*COEFF_WIDTH];
+      assign c1[n] = coeff_flat1[((n+1)*COEFF_WIDTH)-1 : n*COEFF_WIDTH];
+      assign c[n]  = sel_sync ? c1[n] : c0[n];
     end
   endgenerate
 
@@ -136,11 +173,12 @@ module fir_i0 #(
   // ---------------------------------------------------------------------
   // Stage 4: round, rescale, saturate.
   // With COEFF_FRAC = 0 this is a pure saturating truncation to DATA_WIDTH.
-  // ---------------------------------------------------------------------
-
+  //
   // Round-half-up then arithmetic shift, both driven by the runtime
   // coeff_frac register:  rnd = 2^(coeff_frac - 1), or 0 when coeff_frac == 0.
   // The variable >>> is a barrel shifter (LUTs, no DSP).
+  // ---------------------------------------------------------------------
+
   wire [ACC_WIDTH-1:0] one   = {{(ACC_WIDTH-1){1'b0}}, 1'b1};
   wire [ACC_WIDTH-1:0] rnd_u = (coeff_frac == 0)
                              ? {ACC_WIDTH{1'b0}}
