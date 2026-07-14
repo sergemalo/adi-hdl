@@ -146,12 +146,6 @@ module fir_i0 #(
                              ? {ACC_WIDTH{1'b0}}
                              : (one << (coeff_frac - 1'b1));
 
-  wire signed [ACC_WIDTH-1:0] acc_rnd = acc + $signed(rnd_u);
-  wire signed [ACC_WIDTH-1:0] acc_scl = acc_rnd >>> coeff_frac;
-
-  wire hi = (acc_scl > MAXV);
-  wire lo = (acc_scl < MINV);
-
   reg signed [DATA_WIDTH-1:0] dout_fir_r;
   reg                         sat_r;
 
