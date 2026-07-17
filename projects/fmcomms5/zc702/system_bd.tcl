@@ -3,7 +3,8 @@
 ### SPDX short identifier: ADIBSD
 ###############################################################################
 
-source $ad_hdl_dir/projects/common/zc702/zc702_system_bd.tcl
+#source $ad_hdl_dir/projects/common/zc702/zc702_system_bd.tcl
+source ../common/zc702_system_bd.tcl
 source $ad_hdl_dir/projects/scripts/adi_pd.tcl
 
 #system ID
@@ -58,3 +59,10 @@ ad_ip_parameter axi_ad9361_0 CONFIG.ADC_INIT_DELAY 24
 ad_ip_parameter axi_ad9361_1 CONFIG.ADC_INIT_DELAY 24
 ad_ip_parameter axi_ad9361_adc_dma CONFIG.AXI_SLICE_DEST 1
 ad_ip_parameter axi_ad9361_dac_dma CONFIG.AXI_SLICE_SRC 1
+
+# Receive-only CRPA: TX ports are sample-fed, so drop the TX tone
+# generators and TX I/Q correctors on both AD9361s.
+ad_ip_parameter axi_ad9361_0 CONFIG.DAC_DDS_DISABLE          1
+ad_ip_parameter axi_ad9361_1 CONFIG.DAC_DDS_DISABLE          1
+ad_ip_parameter axi_ad9361_0 CONFIG.DAC_IQCORRECTION_DISABLE 1
+ad_ip_parameter axi_ad9361_1 CONFIG.DAC_IQCORRECTION_DISABLE 1
