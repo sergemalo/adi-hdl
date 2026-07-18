@@ -14,14 +14,20 @@
 //   0x004  SCRATCH   RW   free 32-bit register, write/read test
 //   0x008  CFG       RW   [4:0] coeff_frac (Q-format shift), rest reads 0
 //   0x00C  CTRL      RW   [0] active_sel (0 = bank0 feeds FIR, 1 = bank1)
-//   0x040  BANK0[0]  RW   COEFF_WIDTH bits, zero-extended on read
-//   0x044  BANK0[1]  RW
-//   0x048  BANK0[2]  RW
-//   ...    BANK0[k]  RW   at 0x040 + 4*k, for k < NUM_COEFF
-//   0x080  BANK1[0]  RW
-//   0x084  BANK1[1]  RW
-//   0x088  BANK1[2]  RW
-//   ...    BANK1[k]  RW   at 0x080 + 4*k, for k < NUM_COEFF
+//   0x080  BANK0[0]  RW   COEFF_WIDTH bits, zero-extended on read
+//   0x084  BANK0[1]  RW
+//   0x088  BANK0[2]  RW
+//   ...    BANK0[k]  RW   at 0x080 + 4*k, for k < NUM_COEFF
+//   0x100  BANK1[0]  RW
+//   0x104  BANK1[1]  RW
+//   0x108  BANK1[2]  RW
+//   ...    BANK1[k]  RW   at 0x100 + 4*k, for k < NUM_COEFF
+//
+// Each bank is a 32-word (128-byte) aligned block, so the tap index is a
+// 5-bit field (up_waddr[4:0]) -> up to 32 taps/bank; NUM_COEFF picks how many
+// are live. Banks were re-spaced from the original 16-word blocks (bank0 at
+// 0x040, bank1 at 0x080) to make room for 21-tap operation. The old 16-word
+// window at 0x040 is now unmapped.
 //
 // Any unmapped offset reads back 0x00000000.
 // A readback of 0xDEADDEAD means up_rack never asserted (up_axi timeout).
@@ -202,20 +208,36 @@ module axi_fir_ctrl #(
 
   // ---------------------------------------------------------------------
   // Address decode.  up_waddr is a WORD address: byte offset >> 2.
-  //   bank0 : word 0x010..0x01F  (byte 0x040..0x07C)
-  //   bank1 : word 0x020..0x02F  (byte 0x080..0x0BC)
+  //   bank0 : word 0x020..0x03F  (byte 0x080..0x0FC)
+  //   bank1 : word 0x040..0x05F  (byte 0x100..0x17C)
+  // Tap index is the low 5 bits (up_waddr[4:0]) -> up to 32 taps/bank; the
+  // bank select is the next field up (up_waddr[13:5]).
   // ---------------------------------------------------------------------
 
   // Continuous assign with an EXPRESSION on the right side: still "always
   // driven", but now the wire carries the output of combinational logic --
   // here an equality comparator synthesized into LUTs.
-  wire        wr_bank0_sel = (up_waddr[13:4] == 10'h001);
-  wire        wr_bank1_sel = (up_waddr[13:4] == 10'h002);
-  wire [ 3:0] wr_coeff_idx =  up_waddr[3:0];
+  wire        wr_bank0_sel = (up_waddr[13:5] == 9'h001);
+  wire        wr_bank1_sel = (up_waddr[13:5] == 9'h002);
+  wire [ 4:0] wr_coeff_idx =  up_waddr[4:0];
 
-  wire        rd_bank0_sel = (up_raddr[13:4] == 10'h001);
-  wire        rd_bank1_sel = (up_raddr[13:4] == 10'h002);
-  wire [ 3:0] rd_coeff_idx =  up_raddr[3:0];
+  wire        rd_bank0_sel = (up_raddr[13:5] == 9'h001);
+  wire        rd_bank1_sel = (up_raddr[13:5] == 9'h002);
+  wire [ 4:0] rd_coeff_idx =  up_raddr[4:0];
+
+  // ---------------------------------------------------------------------
+  // Compile-time guard.  The 5-bit tap index caps each bank at 32 taps.
+  // If NUM_COEFF ever exceeds that, taps 32+ become unaddressable and writes
+  // to them silently alias -- so halt elaboration loudly instead of shipping
+  // a broken map.  Referencing an undefined module inside a not-taken
+  // generate branch is the Verilog-2001 way to force a self-describing hard
+  // error only when the bad condition holds.
+  // ---------------------------------------------------------------------
+  generate
+    if (NUM_COEFF > 32) begin: g_num_coeff_guard
+      NUM_COEFF_exceeds_32_tap_address_map _bad_num_coeff ();
+    end
+  endgenerate
 
   // ---------------------------------------------------------------------
   // Registers
@@ -266,11 +288,11 @@ module axi_fir_ctrl #(
 
       for (i = 0; i < NUM_COEFF; i = i + 1) begin
         if ((up_wreq == 1'b1) && (wr_bank0_sel == 1'b1) &&
-            (wr_coeff_idx == i[3:0])) begin
+            (wr_coeff_idx == i[4:0])) begin
           up_coeff0[i] <= up_wdata[COEFF_WIDTH-1:0];
         end
         if ((up_wreq == 1'b1) && (wr_bank1_sel == 1'b1) &&
-            (wr_coeff_idx == i[3:0])) begin
+            (wr_coeff_idx == i[4:0])) begin
           up_coeff1[i] <= up_wdata[COEFF_WIDTH-1:0];
         end
       end
