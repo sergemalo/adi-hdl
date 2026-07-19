@@ -74,8 +74,16 @@ module fir_i0 #(
   localparam PROD_WIDTH = DATA_WIDTH + COEFF_WIDTH;
   localparam ACC_WIDTH  = PROD_WIDTH + $clog2(NUM_COEFF);
 
-  // stages: x -> p -> acc -> acc_scl_r -> dout_fir_r
-  localparam LATENCY = 5;
+  // Balanced adder-tree accumulator (stage 3): ceil(log2(NUM_COEFF)) registered
+  // levels, built as a perfect binary tree over the products zero-padded up to
+  // the next power of two (NP2).  Padding leaves are constant 0, so the "+0"
+  // adders fold away -- real adder count is NUM_COEFF-1, all in fabric (no DSP).
+  localparam TREE_LEVELS = (NUM_COEFF <= 1) ? 1 : $clog2(NUM_COEFF);
+  localparam NP2         = (1 << TREE_LEVELS);   // >= NUM_COEFF
+  localparam NP2H        = (NP2 >> 1);           // nodes at level 1 (widest)
+
+  // stages: x -> p -> [adder tree: TREE_LEVELS] -> acc_scl_r -> dout_fir_r
+  localparam LATENCY = 4 + TREE_LEVELS;
 
   localparam signed [ACC_WIDTH-1:0] MAXV =  (1 <<< (DATA_WIDTH-1)) - 1;
   localparam signed [ACC_WIDTH-1:0] MINV = -(1 <<< (DATA_WIDTH-1));
@@ -147,28 +155,59 @@ module fir_i0 #(
   end
 
   // ---------------------------------------------------------------------
-  // Stage 3: accumulate.
+  // Stage 3: accumulate via a pipelined balanced adder tree.
   //
-  // A flat adder tree is fine at NUM_COEFF = 3.  At 21 taps this becomes
-  // the critical path; the fix is a DSP48E1 PCOUT->PCIN cascade (one add
-  // per tap, pipelined), which changes LATENCY.
+  // Products p[] are the tree leaves, sign-extended to ACC_WIDTH and zero-
+  // padded to NP2.  Each level registers pairwise sums, so the whole product
+  // vector for one sample advances together and the result is uniformly
+  // delayed by TREE_LEVELS beats (folded into LATENCY, so the reference lane
+  // stays aligned).
+  //
+  // Bit-exact to the old flat left-fold sum: two's-complement add is
+  // associative modulo 2^ACC_WIDTH, so grouping does not matter; ACC_WIDTH is
+  // sized so no partial sum overflows in the first place.  All adds are fabric
+  // (LUT/CARRY4) -- the multiplies stay in the DSPs, the accumulate does not.
   // ---------------------------------------------------------------------
 
-  reg signed [ACC_WIDTH-1:0] acc_comb;
-  reg signed [ACC_WIDTH-1:0] acc;
-
-  always @(*) begin
-    acc_comb = {ACC_WIDTH{1'b0}};
-    for (i = 0; i < NUM_COEFF; i = i + 1) begin
-      acc_comb = acc_comb + p[i];   // p[i] is signed -> sign-extended
+  // Level 0: products as tree leaves, sign-extended and zero-padded to NP2.
+  wire signed [ACC_WIDTH-1:0] leaf [0:NP2-1];
+  generate
+    for (n = 0; n < NP2; n = n + 1) begin: g_leaf
+      if (n < NUM_COEFF) begin: g_leaf_prod
+        assign leaf[n] = p[n];                 // signed narrower -> sign-extends
+      end else begin: g_leaf_zero
+        assign leaf[n] = {ACC_WIDTH{1'b0}};    // padding -> "+0", folds away
+      end
     end
-  end
+  endgenerate
 
-  always @(posedge clk) begin
-    if (valid == 1'b1) begin
-      acc <= acc_comb;
+  // Levels 1..TREE_LEVELS: registered pairwise adds.  node[L][j] is the j-th
+  // partial sum at level L; the final sum is node[TREE_LEVELS][0].
+  //
+  // use_dsp="no": keep the accumulate in fabric (LUT/CARRY4).  Without this,
+  // Vivado's default DSP inference pulls the wide (ACC_WIDTH) tree adders into
+  // spare DSP48 ALUs -- burning ~8 extra DSPs per channel on top of the 21
+  // multipliers, which does not fit the 8-channel budget.  The multiplies (p)
+  // stay in the DSPs; only the adds are forced out.
+  (* use_dsp = "no" *)
+  reg signed [ACC_WIDTH-1:0] node [1:TREE_LEVELS][0:NP2H-1];
+
+  genvar lvl, nd;
+  generate
+    for (lvl = 1; lvl <= TREE_LEVELS; lvl = lvl + 1) begin: g_tree_lvl
+      for (nd = 0; nd < (NP2 >> lvl); nd = nd + 1) begin: g_tree_node
+        if (lvl == 1) begin: g_from_leaf
+          always @(posedge clk) if (valid)
+            node[lvl][nd] <= leaf[2*nd] + leaf[(2*nd)+1];
+        end else begin: g_from_node
+          always @(posedge clk) if (valid)
+            node[lvl][nd] <= node[lvl-1][2*nd] + node[lvl-1][(2*nd)+1];
+        end
+      end
     end
-  end
+  endgenerate
+
+  wire signed [ACC_WIDTH-1:0] acc = node[TREE_LEVELS][0];
 
   // ---------------------------------------------------------------------
   // Stage 4: round, rescale, saturate.
@@ -187,7 +226,9 @@ module fir_i0 #(
   reg signed [DATA_WIDTH-1:0] dout_fir_r;
   reg                         sat_r;
 
-  // stage 4a: round + rescale (registered)
+  // stage 4a: round + rescale (registered).  use_dsp="no": the (acc + rnd_u)
+  // add is fabric, not a DSP ALU (see the tree note above).
+  (* use_dsp = "no" *)
   reg signed [ACC_WIDTH-1:0] acc_scl_r;
   always @(posedge clk) if (valid) acc_scl_r <= (acc + $signed(rnd_u)) >>> coeff_frac;
 

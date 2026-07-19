@@ -189,6 +189,7 @@ for {set i 0} {$i < 8} {incr i} {
 }
 
 create_bd_cell -type module -reference fir_i0 fir_i0_0
+set_property -dict [list CONFIG.NUM_COEFF $fir_num_coeff] [get_bd_cells fir_i0_0]
 ad_disconnect iq_override_0/dout_0 util_ad9361_adc_pack/fifo_wr_data_0
 ad_disconnect iq_override_0/dout_1 util_ad9361_adc_pack/fifo_wr_data_1
 ad_connect iq_override_0/dout_0 fir_i0_0/din
