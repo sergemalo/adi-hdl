@@ -1,8 +1,8 @@
 ###############################################################################
-## Copyright (C) 2014-2023 Analog Devices, Inc. All rights reserved.
-### SPDX short identifier: ADIBSD
+## Copyright (C) Serge Malo 2026. All rights reserved.
 ###############################################################################
 set fir_num_coeff 21
+set fir_num_chan 8
 
 #source $ad_hdl_dir/projects/common/zc702/zc702_system_bd.tcl
 source ../common/zc702_system_bd.tcl
@@ -34,12 +34,34 @@ source ../common/fmcomms5_bd.tcl
 
 ## FIR CTRL
 create_bd_cell -type module -reference axi_fir_ctrl axi_fir_ctrl
-set_property -dict [list CONFIG.NUM_COEFF $fir_num_coeff] [get_bd_cells axi_fir_ctrl]
+set_property -dict [list \
+  CONFIG.NUM_COEFF    $fir_num_coeff \
+  CONFIG.NUM_CHANNELS $fir_num_chan] [get_bd_cells axi_fir_ctrl]
 ad_cpu_interconnect 0x79070000 axi_fir_ctrl
-#ad_connect axi_fir_ctrl/coeff_flat0 fir_i0_0/coeff_flat0
-#ad_connect axi_fir_ctrl/coeff_flat1 fir_i0_0/coeff_flat1
 ad_connect axi_fir_ctrl/active_sel fir_i0_0/active_sel
 ad_connect axi_fir_ctrl/coeff_frac fir_i0_0/coeff_frac
+#ad_connect axi_fir_ctrl/coeff_flat0 fir_i0_0/coeff_flat0
+#ad_connect axi_fir_ctrl/coeff_flat1 fir_i0_0/coeff_flat1
+
+# Rung 2: drive the single golden FIR from CHANNEL 0's slice of the wide coeff
+# buses (channel 0 = the low fir_num_coeff*COEFF_WIDTH bits of each bank).
+# xlslice is transitional: at Rung 3 the fir_bank wrapper slices all eight lanes
+# in HDL and both these cells AND this single-FIR golden datapath are removed --
+# nothing here survives into the 8-lane production bitstream.
+set fir_coeff_w 18
+set fir_slice_w [expr {$fir_num_coeff * $fir_coeff_w}]
+set fir_bus_w   [expr {$fir_num_chan  * $fir_slice_w}]
+foreach {bank slice} {0 fir_ch0_slice0 1 fir_ch0_slice1} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 $slice
+  set_property -dict [list \
+    CONFIG.DIN_WIDTH  $fir_bus_w \
+    CONFIG.DIN_FROM   [expr {$fir_slice_w - 1}] \
+    CONFIG.DIN_TO     0 \
+    CONFIG.DOUT_WIDTH $fir_slice_w] [get_bd_cells $slice]
+  ad_connect axi_fir_ctrl/coeff_flat$bank $slice/Din
+  ad_connect $slice/Dout fir_i0_0/coeff_flat$bank
+}
+
 ## FIR CTRL
 
 # --- Runtime I/Q override control (AXI GPIO) ---
