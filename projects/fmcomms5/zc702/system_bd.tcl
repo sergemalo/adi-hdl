@@ -36,8 +36,8 @@ source ../common/fmcomms5_bd.tcl
 create_bd_cell -type module -reference axi_fir_ctrl axi_fir_ctrl
 set_property -dict [list CONFIG.NUM_COEFF $fir_num_coeff] [get_bd_cells axi_fir_ctrl]
 ad_cpu_interconnect 0x79070000 axi_fir_ctrl
-ad_connect axi_fir_ctrl/coeff_flat0 fir_i0_0/coeff_flat0
-ad_connect axi_fir_ctrl/coeff_flat1 fir_i0_0/coeff_flat1
+#ad_connect axi_fir_ctrl/coeff_flat0 fir_i0_0/coeff_flat0
+#ad_connect axi_fir_ctrl/coeff_flat1 fir_i0_0/coeff_flat1
 ad_connect axi_fir_ctrl/active_sel fir_i0_0/active_sel
 ad_connect axi_fir_ctrl/coeff_frac fir_i0_0/coeff_frac
 ## FIR CTRL
