@@ -15,6 +15,7 @@ M_DEPS += ../../../library/axi_ad9361/axi_ad9361_delay.tcl
 M_DEPS += iq_override.v
 M_DEPS += axi_fir_ctrl.v
 M_DEPS += fir_i0.v
+M_DEPS += fir_bank.v
 
 LIB_DEPS += axi_ad9361
 LIB_DEPS += axi_clkgen

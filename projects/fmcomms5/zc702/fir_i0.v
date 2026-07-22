@@ -107,6 +107,37 @@ module fir_i0 #(
   end
 
   // ---------------------------------------------------------------------
+  // Partitioned select distribution.
+  //
+  // sel_sync must drive the bank mux of every tap (NUM_COEFF*COEFF_WIDTH
+  // loads/lane). At eight lanes that single ~500-load net's delay (~5.5 ns of a
+  // 10 ns period) blew setup on sel_sync -> mux -> multiply -> p_reg. Earlier
+  // attempts to break it with an inserted pipeline register were undone by
+  // synthesis: a coeff register got absorbed into the DSP, and a plain
+  // max_fanout buffer was merged away.
+  //
+  // So distribute the select STRUCTURALLY instead of relying on the tool:
+  // NSEL copies, each a real register fed from the resolved sel_sync, each
+  // driving a DISJOINT group of taps (tap n uses copy n%NSEL). No single copy
+  // exceeds ~ceil(NUM_COEFF/NSEL)*COEFF_WIDTH loads. dont_touch keeps the copies
+  // distinct (they are identical `<= sel_sync`, which the tool would otherwise
+  // merge back into one high-fanout net). All copies sample the same resolved
+  // sel_sync on the same edge, so the bank select is never torn across taps;
+  // metastability is still resolved by the 2-FF sel_meta/sel_sync. This adds one
+  // clock to WHEN a swap lands (quasi-static -> invisible); no din->dout latency.
+  // ---------------------------------------------------------------------
+
+  localparam NSEL = 8;
+  integer s;
+  (* dont_touch = "true" *) reg [NSEL-1:0] sel_dist = {NSEL{1'b0}};
+
+  always @(posedge clk) begin
+    for (s = 0; s < NSEL; s = s + 1) begin
+      sel_dist[s] <= sel_sync;
+    end
+  end
+
+  // ---------------------------------------------------------------------
   // Unpack both banks and select.  coeff_flatX[k] occupies bits
   // [(k+1)*CW-1 : k*CW].  One shared sel_sync -> all taps switch together.
   // ---------------------------------------------------------------------
@@ -119,9 +150,39 @@ module fir_i0 #(
     for (n = 0; n < NUM_COEFF; n = n + 1) begin: g_unpack
       assign c0[n] = coeff_flat0[((n+1)*COEFF_WIDTH)-1 : n*COEFF_WIDTH];
       assign c1[n] = coeff_flat1[((n+1)*COEFF_WIDTH)-1 : n*COEFF_WIDTH];
-      assign c[n]  = sel_sync ? c1[n] : c0[n];
+      assign c[n]  = sel_dist[n % NSEL] ? c1[n] : c0[n];
     end
   endgenerate
+
+  // ---------------------------------------------------------------------
+  // Stage 1b: register the bank-selected coefficient before the multiplier.
+  //
+  // sel_dist already cut the select fanout, but the failing path still runs
+  // sel_dist -> mux -> MULTIPLY -> p_reg, so the multiply's delay stays on the
+  // select path and net delay + multiply together miss the period. Registering
+  // the muxed coeff splits it:
+  //   sel_dist -> mux -> c_reg     (register-to-register, no multiply, fast)
+  //   c_reg    -> multiply -> p    (no select in the multiply path)
+  //
+  // dont_touch is mandatory here: without it synthesis absorbs c_reg into the
+  // DSP's B register, which puts the multiply back on the select path (this is
+  // exactly what happened on an earlier attempt). Keeping it in fabric forces
+  // the split. Coefficients are quasi-static, so this adds NO din->dout latency
+  // -- a swap simply lands one more sample beat later; dout_ref stays aligned,
+  // LATENCY unchanged. All taps latch c_reg from the same sel_dist edge, so the
+  // swap is still atomic.
+  // ---------------------------------------------------------------------
+
+  (* dont_touch = "true" *)
+  reg signed [COEFF_WIDTH-1:0] c_reg [0:NUM_COEFF-1];
+
+  always @(posedge clk) begin
+    if (valid == 1'b1) begin
+      for (i = 0; i < NUM_COEFF; i = i + 1) begin
+        c_reg[i] <= c[i];
+      end
+    end
+  end
 
   // ---------------------------------------------------------------------
   // Stage 1: tapped delay line.  x[0] is the newest sample.
@@ -140,8 +201,9 @@ module fir_i0 #(
   end
 
   // ---------------------------------------------------------------------
-  // Stage 2: multiply.  One DSP48E1 per tap; the register here maps to the
-  // DSP's internal M register, so synthesis keeps the multiply pipelined.
+  // Stage 2: multiply.  One DSP48E1 per tap.  Both operands are registered
+  // (x from the tap line, c_reg above), so the multiply is a clean
+  // register-to-register path with no select logic.
   // ---------------------------------------------------------------------
 
   reg signed [PROD_WIDTH-1:0] p [0:NUM_COEFF-1];
@@ -149,7 +211,7 @@ module fir_i0 #(
   always @(posedge clk) begin
     if (valid == 1'b1) begin
       for (i = 0; i < NUM_COEFF; i = i + 1) begin
-        p[i] <= x[i] * c[i];
+        p[i] <= x[i] * c_reg[i];
       end
     end
   end

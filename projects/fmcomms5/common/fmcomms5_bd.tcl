@@ -174,29 +174,23 @@ ad_connect util_ad9361_divclk_reset/peripheral_reset util_ad9361_adc_pack/reset
 ad_connect util_ad9361_adc_fifo/dout_valid_0 util_ad9361_adc_pack/fifo_wr_en
 ad_connect util_ad9361_adc_pack/fifo_wr_overflow util_ad9361_adc_fifo/dout_ovf
 
-### Intereception of the ADC data path for I/Q override and FIR processing
-#for {set i 0} {$i < 8} {incr i} {
-#  ad_connect util_ad9361_adc_fifo/dout_enable_$i util_ad9361_adc_pack/enable_$i
-#  ad_connect util_ad9361_adc_fifo/dout_data_$i util_ad9361_adc_pack/fifo_wr_data_$i
-#}
-
+# IQ_OVERRIDE AND FIR BANK
 create_bd_cell -type module -reference iq_override iq_override_0
 
+create_bd_cell -type module -reference fir_bank fir_bank_0
+set_property -dict [list CONFIG.NUM_COEFF $fir_num_coeff] [get_bd_cells fir_bank_0]
+
+# ADC path interception: FIFO -> iq_override -> fir_bank -> pack (all 8 lanes)
 for {set i 0} {$i < 8} {incr i} {
   ad_connect util_ad9361_adc_fifo/dout_enable_$i util_ad9361_adc_pack/enable_$i
-  ad_connect util_ad9361_adc_fifo/dout_data_$i iq_override_0/din_$i
-  ad_connect iq_override_0/dout_$i util_ad9361_adc_pack/fifo_wr_data_$i
+  ad_connect util_ad9361_adc_fifo/dout_data_$i   iq_override_0/din_$i
+  ad_connect iq_override_0/dout_$i               fir_bank_0/din_$i
+  ad_connect fir_bank_0/dout_fir_$i              util_ad9361_adc_pack/fifo_wr_data_$i
+  ad_connect util_ad9361_adc_fifo/dout_valid_$i  fir_bank_0/valid_$i
 }
+ad_connect util_ad9361_divclk/clk_out fir_bank_0/clk
 
-create_bd_cell -type module -reference fir_i0 fir_i0_0
-set_property -dict [list CONFIG.NUM_COEFF $fir_num_coeff] [get_bd_cells fir_i0_0]
-ad_disconnect iq_override_0/dout_0 util_ad9361_adc_pack/fifo_wr_data_0
-ad_disconnect iq_override_0/dout_1 util_ad9361_adc_pack/fifo_wr_data_1
-ad_connect iq_override_0/dout_0 fir_i0_0/din
-ad_connect fir_i0_0/dout_fir util_ad9361_adc_pack/fifo_wr_data_0
-ad_connect fir_i0_0/dout_ref util_ad9361_adc_pack/fifo_wr_data_1
-ad_connect util_ad9361_divclk/clk_out fir_i0_0/clk
-ad_connect util_ad9361_adc_fifo/dout_valid_0 fir_i0_0/valid
+# END OF IQ_OVERRIDE AND FIR BANK
 
 # adc-path dma
 
