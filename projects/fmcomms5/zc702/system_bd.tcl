@@ -29,7 +29,8 @@ add_files -norecurse  -fileset sources_1 [list \
   "$ad_hdl_dir/library/common/up_axi.v" \
   "axi_fir_ctrl.v" \
   "fir_i0.v" \
-  "fir_bank.v" ]
+  "fir_bank.v" \
+  "axi_iq_ctrl.v" ]
 update_compile_order -fileset sources_1
 source ../common/fmcomms5_bd.tcl
 
@@ -45,19 +46,15 @@ ad_connect axi_fir_ctrl/active_sel  fir_bank_0/active_sel
 ad_connect axi_fir_ctrl/coeff_frac  fir_bank_0/coeff_frac
 ## FIR CTRL
 
-# --- Runtime I/Q override control (AXI GPIO) ---
-ad_ip_instance axi_gpio axi_iq_ctrl
-puts "GPIO pins: [get_bd_pins -of_objects [get_bd_cells axi_iq_ctrl] -filter {DIR == O}]"
-ad_ip_parameter axi_iq_ctrl CONFIG.C_IS_DUAL       1
-ad_ip_parameter axi_iq_ctrl CONFIG.C_ALL_OUTPUTS   1
-ad_ip_parameter axi_iq_ctrl CONFIG.C_ALL_OUTPUTS_2 1
-ad_ip_parameter axi_iq_ctrl CONFIG.C_GPIO_WIDTH    32
-ad_ip_parameter axi_iq_ctrl CONFIG.C_GPIO2_WIDTH   1
-
+# --- Runtime sample injector control (custom AXI-Lite slave) ---
+create_bd_cell -type module -reference axi_iq_ctrl axi_iq_ctrl
 ad_cpu_interconnect 0x79060000 axi_iq_ctrl
 
-ad_connect axi_iq_ctrl/gpio_io_o  iq_override_0/ctrl_iq
-ad_connect axi_iq_ctrl/gpio2_io_o iq_override_0/override_en
+ad_connect axi_iq_ctrl/override_en  iq_override_0/override_en
+ad_connect axi_iq_ctrl/pattern_mode iq_override_0/pattern_mode
+ad_connect axi_iq_ctrl/pattern_hold iq_override_0/pattern_hold
+ad_connect axi_iq_ctrl/dc_flat      iq_override_0/dc_flat
+ad_connect axi_iq_ctrl/seed_flat    iq_override_0/seed_flat
 ad_connect util_ad9361_divclk/clk_out iq_override_0/clk
 
 ad_ip_parameter axi_ad9361_0 CONFIG.ADC_INIT_DELAY 24

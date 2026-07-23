@@ -188,6 +188,7 @@ for {set i 0} {$i < 8} {incr i} {
   ad_connect fir_bank_0/dout_fir_$i              util_ad9361_adc_pack/fifo_wr_data_$i
   ad_connect util_ad9361_adc_fifo/dout_valid_$i  fir_bank_0/valid_$i
 }
+ad_connect util_ad9361_adc_fifo/dout_valid_0 iq_override_0/valid
 ad_connect util_ad9361_divclk/clk_out fir_bank_0/clk
 
 # END OF IQ_OVERRIDE AND FIR BANK
