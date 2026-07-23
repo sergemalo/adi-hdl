@@ -90,6 +90,32 @@ module fir_bank #(
   assign dout_fir_4 = dout[4]; assign dout_fir_5 = dout[5];
   assign dout_fir_6 = dout[6]; assign dout_fir_7 = dout[7];
 
+  // ---------------------------------------------------------------------
+  // Shared active_sel synchronizer.
+  //
+  // active_sel is written by the CPU in the s_axi domain and is genuinely
+  // asynchronous to the FIR clock. Resolving it ONCE here (a single 2-FF
+  // synchronizer) and driving the settled sel_sync to all NUM_CHANNELS lanes
+  // means every lane sees the identical select on the identical edge -- so a
+  // coefficient-bank swap commits coherently across all 8 lanes in the same
+  // sample beat, with no cross-lane tear even if the write lands in the
+  // metastability window. (Per-lane synchronizers would each resolve the
+  // crossing independently, allowing a rare 1-beat skew between lanes.)
+  //
+  // MUST free-run (no valid enable): a synchronizer clocked by an intermittent
+  // enable does not resolve metastability. The CDC (active_sel -> sel_meta) is
+  // covered by the s_axi/FIR set_clock_groups -asynchronous, same as before,
+  // now with a single crossing instead of eight.
+  // ---------------------------------------------------------------------
+
+  (* ASYNC_REG = "TRUE" *) reg sel_meta = 1'b0;
+  (* ASYNC_REG = "TRUE" *) reg sel_sync = 1'b0;
+
+  always @(posedge clk) begin
+    sel_meta <= active_sel;
+    sel_sync <= sel_meta;
+  end
+
   genvar c;
   generate
     for (c = 0; c < NUM_CHANNELS; c = c + 1) begin: g_lane
@@ -104,7 +130,7 @@ module fir_bank #(
         .din         (din[c]),
         .coeff_flat0 (coeff_flat0[c*SLICE +: SLICE]),
         .coeff_flat1 (coeff_flat1[c*SLICE +: SLICE]),
-        .active_sel  (active_sel),
+        .sel_sync    (sel_sync),       // shared, already synchronized -> coherent swap
         .coeff_frac  (coeff_frac),
         .dout_fir    (dout[c]),
         .dout_ref    (),                 // unused in the 8-lane production path

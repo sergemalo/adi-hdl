@@ -57,7 +57,7 @@ module fir_i0 #(
   input      signed [DATA_WIDTH-1:0]        din,
   input      [(NUM_COEFF*COEFF_WIDTH)-1:0]  coeff_flat0,  // bank 0 (s_axi_aclk)
   input      [(NUM_COEFF*COEFF_WIDTH)-1:0]  coeff_flat1,  // bank 1 (s_axi_aclk)
-  input                                     active_sel,   // async: 0=bank0, 1=bank1
+  input                                     sel_sync,     // ALREADY synchronized in fir_bank: 0=bank0, 1=bank1
   input      [FRAC_WIDTH-1:0]               coeff_frac,   // runtime Q-format shift
 
   output     signed [DATA_WIDTH-1:0]        dout_fir,
@@ -92,19 +92,14 @@ module fir_i0 #(
   genvar  n;
 
   // ---------------------------------------------------------------------
-  // active_sel synchronizer.  MUST free-run (no `valid` enable): a
-  // synchronizer clocked by an intermittent enable does not resolve
-  // metastability.  The mux it drives is combinational, so this adds no
-  // datapath latency.
+  // The active_sel CDC crossing is resolved ONCE in fir_bank (a single 2-FF
+  // synchronizer shared by all lanes), and the settled select arrives here as
+  // sel_sync.  Doing it once -- rather than per lane -- means every lane sees
+  // the identical select on the identical edge, so a bank swap commits
+  // coherently across all 8 lanes in the same sample beat (no cross-lane tear
+  // even in the metastability window).  fir_i0 therefore does NOT synchronize;
+  // it only distributes the already-resolved select for fanout (below).
   // ---------------------------------------------------------------------
-
-  (* ASYNC_REG = "TRUE" *) reg sel_meta = 1'b0;
-  (* ASYNC_REG = "TRUE" *) reg sel_sync = 1'b0;
-
-  always @(posedge clk) begin
-    sel_meta <= active_sel;
-    sel_sync <= sel_meta;
-  end
 
   // ---------------------------------------------------------------------
   // Partitioned select distribution.
@@ -117,14 +112,14 @@ module fir_i0 #(
   // max_fanout buffer was merged away.
   //
   // So distribute the select STRUCTURALLY instead of relying on the tool:
-  // NSEL copies, each a real register fed from the resolved sel_sync, each
-  // driving a DISJOINT group of taps (tap n uses copy n%NSEL). No single copy
-  // exceeds ~ceil(NUM_COEFF/NSEL)*COEFF_WIDTH loads. dont_touch keeps the copies
-  // distinct (they are identical `<= sel_sync`, which the tool would otherwise
-  // merge back into one high-fanout net). All copies sample the same resolved
-  // sel_sync on the same edge, so the bank select is never torn across taps;
-  // metastability is still resolved by the 2-FF sel_meta/sel_sync. This adds one
-  // clock to WHEN a swap lands (quasi-static -> invisible); no din->dout latency.
+  // NSEL copies, each a real register fed from the (already resolved) sel_sync,
+  // each driving a DISJOINT group of taps (tap n uses copy n%NSEL). No single
+  // copy exceeds ~ceil(NUM_COEFF/NSEL)*COEFF_WIDTH loads. dont_touch keeps the
+  // copies distinct (they are identical `<= sel_sync`, which the tool would
+  // otherwise merge back into one high-fanout net). All copies sample the same
+  // sel_sync on the same edge, so the bank select is never torn across taps.
+  // This adds one clock to WHEN a swap lands (quasi-static -> invisible); no
+  // din->dout latency.
   // ---------------------------------------------------------------------
 
   localparam NSEL = 8;
