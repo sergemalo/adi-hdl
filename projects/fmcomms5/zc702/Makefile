@@ -16,6 +16,7 @@ M_DEPS += iq_override.v
 M_DEPS += axi_fir_ctrl.v
 M_DEPS += fir_i0.v
 M_DEPS += fir_bank.v
+M_DEPS += phase_rot.v
 
 LIB_DEPS += axi_ad9361
 LIB_DEPS += axi_clkgen

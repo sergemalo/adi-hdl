@@ -30,7 +30,11 @@ add_files -norecurse  -fileset sources_1 [list \
   "axi_fir_ctrl.v" \
   "fir_i0.v" \
   "fir_bank.v" \
-  "axi_iq_ctrl.v" ]
+  "axi_iq_ctrl.v"]
+  
+# Phase rotator
+add_files -norecurse -fileset sources_1 phase_rot.v
+
 update_compile_order -fileset sources_1
 source ../common/fmcomms5_bd.tcl
 
