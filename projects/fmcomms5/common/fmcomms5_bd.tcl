@@ -174,51 +174,37 @@ ad_connect util_ad9361_divclk_reset/peripheral_reset util_ad9361_adc_pack/reset
 ad_connect util_ad9361_adc_fifo/dout_valid_0 util_ad9361_adc_pack/fifo_wr_en
 ad_connect util_ad9361_adc_pack/fifo_wr_overflow util_ad9361_adc_fifo/dout_ovf
 
-# IQ_OVERRIDE, FIR BANK, and PHASE ROTATOR
+
+
+# IQ_OVERRIDE, FIR BANK, and PHASE BANK
 create_bd_cell -type module -reference iq_override iq_override_0
 
 create_bd_cell -type module -reference fir_bank fir_bank_0
 set_property -dict [list CONFIG.NUM_COEFF $fir_num_coeff] [get_bd_cells fir_bank_0]
 
-# --- Phase/gain rotators: one per complex channel, IDENTITY coeffs for bring-up ---
-# Q2.16 identity: a = 1.0 = 65536, b = 0.  rstn tied high (it only clears valid).
-create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 phase_a_ident
-set_property -dict [list CONFIG.CONST_WIDTH {18} CONFIG.CONST_VAL {65536}] [get_bd_cells phase_a_ident]
-create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 phase_b_zero
-set_property -dict [list CONFIG.CONST_WIDTH {18} CONFIG.CONST_VAL {0}] [get_bd_cells phase_b_zero]
+create_bd_cell -type module -reference phase_bank phase_bank_0
+
+# phase_bank rstn: tie high (it only clears the valid pipeline at power-up)
 create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 phase_rstn
 set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {1}] [get_bd_cells phase_rstn]
+ad_connect phase_rstn/dout phase_bank_0/rstn
 
-for {set c 0} {$c < 4} {incr c} {
-  create_bd_cell -type module -reference phase_rot phase_rot_$c
-  ad_connect util_ad9361_divclk/clk_out        phase_rot_$c/clk
-  ad_connect phase_rstn/dout                   phase_rot_$c/rstn
-  ad_connect phase_a_ident/dout                phase_rot_$c/a_in
-  ad_connect phase_b_zero/dout                 phase_rot_$c/b_in
-  ad_connect util_ad9361_adc_fifo/dout_valid_0 phase_rot_$c/valid_in
-}
-
-# ADC path inputs: FIFO -> iq_override -> fir_bank (all 8 lanes)
+# ADC path: FIFO -> iq_override -> fir_bank -> phase_bank -> pack (all 8 lanes)
 for {set i 0} {$i < 8} {incr i} {
   ad_connect util_ad9361_adc_fifo/dout_enable_$i util_ad9361_adc_pack/enable_$i
   ad_connect util_ad9361_adc_fifo/dout_data_$i   iq_override_0/din_$i
   ad_connect iq_override_0/dout_$i               fir_bank_0/din_$i
+  ad_connect fir_bank_0/dout_fir_$i              phase_bank_0/din_$i
+  ad_connect phase_bank_0/dout_$i                util_ad9361_adc_pack/fifo_wr_data_$i
   ad_connect util_ad9361_adc_fifo/dout_valid_$i  fir_bank_0/valid_$i
 }
-
-# fir_bank -> phase_rot -> pack.  Lane 2c = I, 2c+1 = Q per channel (interleaved map).
-for {set c 0} {$c < 4} {incr c} {
-  set li [expr {2*$c}]
-  set lq [expr {2*$c + 1}]
-  ad_connect fir_bank_0/dout_fir_$li phase_rot_$c/i_in
-  ad_connect fir_bank_0/dout_fir_$lq phase_rot_$c/q_in
-  ad_connect phase_rot_$c/i_out util_ad9361_adc_pack/fifo_wr_data_$li
-  ad_connect phase_rot_$c/q_out util_ad9361_adc_pack/fifo_wr_data_$lq
-}
-
 ad_connect util_ad9361_adc_fifo/dout_valid_0 iq_override_0/valid
+ad_connect util_ad9361_adc_fifo/dout_valid_0 phase_bank_0/valid_in
 ad_connect util_ad9361_divclk/clk_out fir_bank_0/clk
-# END OF IQ_OVERRIDE, FIR BANK, and PHASE ROTATOR
+ad_connect util_ad9361_divclk/clk_out phase_bank_0/clk
+# END OF IQ_OVERRIDE, FIR BANK, and PHASE BANK
+
+
 
 # adc-path dma
 

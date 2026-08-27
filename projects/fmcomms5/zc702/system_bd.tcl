@@ -31,11 +31,14 @@ add_files -norecurse  -fileset sources_1 [list \
   "fir_i0.v" \
   "fir_bank.v" \
   "axi_iq_ctrl.v"]
-  
-# Phase rotator
-add_files -norecurse -fileset sources_1 phase_rot.v
 
+# Phase rotator + bank + AXI control
+add_files -norecurse -fileset sources_1 [list \
+  "phase_rot.v" \
+  "phase_bank.v" \
+  "axi_phase_ctrl.v"]
 update_compile_order -fileset sources_1
+
 source ../common/fmcomms5_bd.tcl
 
 ## FIR CTRL
@@ -49,6 +52,18 @@ ad_connect axi_fir_ctrl/coeff_flat1 fir_bank_0/coeff_flat1
 ad_connect axi_fir_ctrl/active_sel  fir_bank_0/active_sel
 ad_connect axi_fir_ctrl/coeff_frac  fir_bank_0/coeff_frac
 ## FIR CTRL
+
+## PHASE CTRL
+create_bd_cell -type module -reference axi_phase_ctrl axi_phase_ctrl
+ad_cpu_interconnect 0x79080000 axi_phase_ctrl
+ad_connect axi_phase_ctrl/a_bank0      phase_bank_0/a_bank0
+ad_connect axi_phase_ctrl/b_bank0      phase_bank_0/b_bank0
+ad_connect axi_phase_ctrl/a_bank1      phase_bank_0/a_bank1
+ad_connect axi_phase_ctrl/b_bank1      phase_bank_0/b_bank1
+ad_connect axi_phase_ctrl/active_sel   phase_bank_0/active_sel
+ad_connect axi_phase_ctrl/coeff_frac_o phase_bank_0/coeff_frac
+## PHASE CTRL
+
 
 # --- Runtime sample injector control (custom AXI-Lite slave) ---
 create_bd_cell -type module -reference axi_iq_ctrl axi_iq_ctrl
