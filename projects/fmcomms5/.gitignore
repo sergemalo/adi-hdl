@@ -1,3 +1,4 @@
 *.bit
+*.old
 */*.bit
 BOOT.BIN
