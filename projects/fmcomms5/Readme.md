@@ -5,9 +5,11 @@ READEME by Serge Malo
 Make sure Vivado GUI app is closed.
 In a terminal:
 ```
-$ cd to ./zc702
-$ source ./adi_build_env.sh
-$ make
+cd zc702
+source adi_build_env.sh
+rm -rf ~/w/adi-hdl/ipcache
+make clean
+make
 ```
 ### How to load the image to the FPGA
 (I will write a script to automate this process)
