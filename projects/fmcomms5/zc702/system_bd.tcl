@@ -25,10 +25,16 @@ set sys_dma_clk [get_bd_nets sys_dma_clk]
 # IQ_OVERRIDE
 add_files -norecurse -fileset sources_1 iq_override.v
 # FIR
+# chan_delay.v must precede fir_bank.v: fir_bank.v's generate block
+# instantiates chan_delay for lanes 0,1 (the channel-0 DSP reclaim -- rx0 is
+# the delay/phase reference and its FIR is a permanent identity filter, so a
+# plain delay line replaces the 21-tap multiply-accumulate for those two
+# lanes only; see fir_bank.v's header for the full rationale).
 add_files -norecurse  -fileset sources_1 [list \
   "$ad_hdl_dir/library/common/up_axi.v" \
   "axi_fir_ctrl.v" \
   "fir_i0.v" \
+  "chan_delay.v" \
   "fir_bank.v" \
   "axi_iq_ctrl.v"]
 

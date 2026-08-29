@@ -17,6 +17,23 @@
 // Lane map (matches iq_override dout_$i and the ADC pack fifo_wr_data_$i):
 //   0,1 = AD9361_0 I0,Q0   2,3 = AD9361_0 I1,Q1
 //   4,5 = AD9361_1 I0,Q0   6,7 = AD9361_1 I1,Q1
+//
+// CHANNEL-0 DSP RECLAIM (lanes 0,1 = rx0 I,Q):
+//   rx0 is the delay/phase calibration reference channel. Its coefficients
+//   are permanently a unit center tap (identity filter) -- the calibration
+//   toolchain (fir_delay_coeffs / measure_time_offsets) never assigns rx0 a
+//   nonzero residual delay, by construction (channel 1 in the math note's
+//   1-indexed convention = channel 0 here is always the reference, delay=0).
+//   So lanes 0,1 are wired to chan_delay instead of fir_i0: same din->dout
+//   latency (CENTER_TAP + LATENCY sample beats, bit-exact), zero DSPs instead
+//   of NUM_COEFF each. Reclaims ~2*NUM_COEFF DSPs (~40 for NUM_COEFF=21).
+//
+//   These two lanes no longer read coeff_flat0/1 or sel_sync at all -- their
+//   slices of the coefficient bus are simply unused wires now. The
+//   axi_fir_ctrl register map is left byte-identical (channels 0,1's tap
+//   registers are still writable/readable there) for host-software address
+//   compatibility; writes to those two channels' taps are hardware no-ops.
+//   See axi_fir_ctrl.v's header for the corresponding register-map note.
 
 `timescale 1ns/100ps
 
@@ -50,6 +67,8 @@ module fir_bank #(
 
   // wide coefficient banks from axi_fir_ctrl (8 channels, s_axi_aclk domain).
   // literal 8: this bank is fixed at the FMCOMMS5 lane count (4 RX x I/Q).
+  // NOTE: the slices for lanes 0,1 (channel 0) are received but unused --
+  // see the CHANNEL-0 DSP RECLAIM note above.
   input      [(8*NUM_COEFF*COEFF_WIDTH)-1:0]  coeff_flat0,
   input      [(8*NUM_COEFF*COEFF_WIDTH)-1:0]  coeff_flat1,
   input                                       active_sel,   // global: 0=bank0, 1=bank1
@@ -102,6 +121,10 @@ module fir_bank #(
   // metastability window. (Per-lane synchronizers would each resolve the
   // crossing independently, allowing a rare 1-beat skew between lanes.)
   //
+  // Note: lanes 0,1 (chan_delay) do not consume sel_sync at all -- it is
+  // still generated here unconditionally since lanes 2-7 (fir_i0) need it,
+  // and a partial synchronizer would be needless complexity for no DSP gain.
+  //
   // MUST free-run (no valid enable): a synchronizer clocked by an intermittent
   // enable does not resolve metastability. The CDC (active_sel -> sel_meta) is
   // covered by the s_axi/FIR set_clock_groups -asynchronous, same as before,
@@ -119,23 +142,44 @@ module fir_bank #(
   genvar c;
   generate
     for (c = 0; c < NUM_CHANNELS; c = c + 1) begin: g_lane
-      fir_i0 #(
-        .NUM_COEFF   (NUM_COEFF),
-        .DATA_WIDTH  (DATA_WIDTH),
-        .COEFF_WIDTH (COEFF_WIDTH),
-        .FRAC_WIDTH  (FRAC_WIDTH)
-      ) u_fir (
-        .clk         (clk),
-        .valid       (vld[c]),
-        .din         (din[c]),
-        .coeff_flat0 (coeff_flat0[c*SLICE +: SLICE]),
-        .coeff_flat1 (coeff_flat1[c*SLICE +: SLICE]),
-        .sel_sync    (sel_sync),       // shared, already synchronized -> coherent swap
-        .coeff_frac  (coeff_frac),
-        .dout_fir    (dout[c]),
-        .dout_ref    (),                 // unused in the 8-lane production path
-        .sat         ()                  // per-lane saturation flag (available)
-      );
+      if (c < 2) begin: g_ch0_delay
+        // Lanes 0,1 = AD9361_0 I0,Q0 = rx0 = the delay/phase reference
+        // channel. Its FIR coefficients are permanently a unit center tap
+        // (c_reg[(NUM_COEFF-1)/2] = 1.0 in Q2.16, all others 0), so the
+        // 21-tap multiply-accumulate is pure overhead: chan_delay reproduces
+        // the IDENTICAL din->dout_fir latency with a shift register,
+        // reclaiming NUM_COEFF DSPs/lane. No coefficient bus, no bank
+        // select, no axi_fir_ctrl dependency for this lane.
+        chan_delay #(
+          .NUM_COEFF  (NUM_COEFF),
+          .DATA_WIDTH (DATA_WIDTH)
+        ) u_delay (
+          .clk      (clk),
+          .valid    (vld[c]),
+          .din      (din[c]),
+          .dout_fir (dout[c]),
+          .dout_ref (),                 // unused in the 8-lane production path
+          .sat      ()                  // always 0 for a pure delay
+        );
+      end else begin: g_fir
+        fir_i0 #(
+          .NUM_COEFF   (NUM_COEFF),
+          .DATA_WIDTH  (DATA_WIDTH),
+          .COEFF_WIDTH (COEFF_WIDTH),
+          .FRAC_WIDTH  (FRAC_WIDTH)
+        ) u_fir (
+          .clk         (clk),
+          .valid       (vld[c]),
+          .din         (din[c]),
+          .coeff_flat0 (coeff_flat0[c*SLICE +: SLICE]),
+          .coeff_flat1 (coeff_flat1[c*SLICE +: SLICE]),
+          .sel_sync    (sel_sync),       // shared, already synchronized -> coherent swap
+          .coeff_frac  (coeff_frac),
+          .dout_fir    (dout[c]),
+          .dout_ref    (),                 // unused in the 8-lane production path
+          .sat         ()                  // per-lane saturation flag (available)
+        );
+      end
     end
   endgenerate
 

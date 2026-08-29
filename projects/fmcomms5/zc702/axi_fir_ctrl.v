@@ -12,6 +12,21 @@
 // The wide coeff_flat0/1 buses dangle in the Rung-1 build; the FIR lanes are
 // wired to their per-channel slices in Rung 3.
 //
+// *** CHANNELS 0,1 ARE HARDWARE NO-OPS (as of the channel-0 DSP reclaim) ***
+// This register map is unchanged and stays byte-identical for every channel,
+// including 0 and 1, for host-software address compatibility (fir_regmap_ch.py
+// and friends need no changes). But downstream, fir_bank.v no longer wires
+// channels 0,1 (lanes 0,1 = rx0 I,Q) to a coefficient-consuming fir_i0 -- those
+// two lanes are a fixed-latency delay line (chan_delay) that never reads
+// coeff_flat0/1 or active_sel. Reads of channels 0,1's tap registers still
+// return whatever was last written (the storage flops here are untouched);
+// writes still succeed at the AXI level; but nothing in the datapath responds
+// to them. This is intentional: rx0 is the delay/phase calibration reference
+// channel and its FIR is permanently an identity filter (unit center tap), so
+// the coefficient path for those two channels was pure overhead. See
+// fir_bank.v's "CHANNEL-0 DSP RECLAIM" header note for the full rationale.
+// Channels 2-7 are unaffected and behave exactly as before.
+//
 // =====================================================================
 // Register map (byte offsets from the peripheral base)
 // =====================================================================
@@ -31,6 +46,9 @@
 //   Each channel occupies a 0x100 (256-byte) stride = two 128-byte banks.
 //   c=0 -> 0x8000, c=1 -> 0x8100, ... c=7 -> 0x8700.
 //
+//   NOTE: c=0 (0x8000) and c=1 (0x8100) are readable/writable here but
+//   INEFFECTIVE downstream -- see the header note above. c=2..7 are live.
+//
 // Address bit fields (up_addr is a WORD address = byte offset >> 2):
 //     up_addr[13]   = 1 selects the coefficient region (0 = global control)
 //     up_addr[8:6]  = channel  (0..7)
@@ -46,6 +64,8 @@
 //   2. write CTRL with active_sel flipped  <-- ONE write, atomic for all lanes
 // Do not write the active bank. coeff_frac is NOT double buffered (it is the
 // coefficient format, fixed at init, shared by all channels).
+// (Writes to channels 0,1 are harmless under this protocol regardless -- they
+// simply have no observable effect on dout_fir_0/1.)
 //
 // CDC: coeff_flat0/1 and active_sel leave in the s_axi_aclk domain. Each FIR
 // lane synchronizes the shared active_sel itself; the wide banks are
@@ -63,6 +83,8 @@ module axi_fir_ctrl #(
   // channel c occupies bits [(c+1)*NUM_COEFF*COEFF_WIDTH-1 : c*NUM_COEFF*COEFF_WIDTH];
   // within that, tap k occupies the k-th COEFF_WIDTH slice (same packing the
   // single-channel block used, just repeated per channel).
+  // NOTE: channels 0,1 slices are generated here as before but are unused by
+  // fir_bank.v (see header note above).
   output [(NUM_CHANNELS*NUM_COEFF*COEFF_WIDTH)-1:0] coeff_flat0,
   output [(NUM_CHANNELS*NUM_COEFF*COEFF_WIDTH)-1:0] coeff_flat1,
   output                                            active_sel,   // global, 1 bit
@@ -156,6 +178,11 @@ module axi_fir_ctrl #(
   // (channel*NUM_COEFF + tap); every word is read in parallel by the
   // flatten block below, which forces a register-file (not BRAM)
   // implementation -- exactly what a fully-parallel FIR needs.
+  //
+  // NOTE: storage for channels 0,1 is retained unmodified (see header note)
+  // even though fir_bank.v no longer consumes it -- this keeps the register
+  // map's byte layout, AXI decode, and read-back behavior identical to the
+  // pre-reclaim design for every channel, including 0 and 1.
   // ---------------------------------------------------------------------
   reg [31:0]              up_scratch     = 32'd0;
   reg [ 4:0]              up_coeff_frac  = 5'd0;
