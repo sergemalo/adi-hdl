@@ -176,7 +176,7 @@ ad_connect util_ad9361_adc_pack/fifo_wr_overflow util_ad9361_adc_fifo/dout_ovf
 
 
 
-# IQ_OVERRIDE, FIR BANK, and PHASE BANK
+# IQ_OVERRIDE, FIR BANK, PHASE BANK, and COVAR BANK
 create_bd_cell -type module -reference iq_override iq_override_0
 
 create_bd_cell -type module -reference fir_bank fir_bank_0
@@ -189,20 +189,40 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 phase_rstn
 set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {1}] [get_bd_cells phase_rstn]
 ad_connect phase_rstn/dout phase_bank_0/rstn
 
+# covar_bank: MVDR covariance-matrix accumulator (4x4 Hermitian, triple
+# buffered). Sits as a TAP off phase_bank_0's outputs -- it does NOT sit
+# inline in the DMA path, so the existing phase_bank -> pack -> DMA route is
+# completely unchanged. No rstn port: fir_bank/chan_delay have none either
+# (only phase_bank keeps one, tied high, to clear its valid pipeline);
+# covar_bank's registers self-init via `initial` and are cleared at runtime
+# by the ENABLE 0->1 edge. Parameter defaults (DATA_WIDTH=16, NUM_CH=4,
+# N_SAMPLES=30720, NUM_BANKS=3) already match this board, so no CONFIG
+# overrides are needed -- same as phase_bank_0, unlike fir_bank_0.
+create_bd_cell -type module -reference covar_bank covar_bank_0
+
 # ADC path: FIFO -> iq_override -> fir_bank -> phase_bank -> pack (all 8 lanes)
+#                                                  \-> covar_bank (tap only)
 for {set i 0} {$i < 8} {incr i} {
   ad_connect util_ad9361_adc_fifo/dout_enable_$i util_ad9361_adc_pack/enable_$i
   ad_connect util_ad9361_adc_fifo/dout_data_$i   iq_override_0/din_$i
   ad_connect iq_override_0/dout_$i               fir_bank_0/din_$i
   ad_connect fir_bank_0/dout_fir_$i              phase_bank_0/din_$i
   ad_connect phase_bank_0/dout_$i                util_ad9361_adc_pack/fifo_wr_data_$i
+  ad_connect phase_bank_0/dout_$i                covar_bank_0/din_$i
   ad_connect util_ad9361_adc_fifo/dout_valid_$i  fir_bank_0/valid_$i
 }
 ad_connect util_ad9361_adc_fifo/dout_valid_0 iq_override_0/valid
 ad_connect util_ad9361_adc_fifo/dout_valid_0 phase_bank_0/valid_in
+# covar_bank/valid uses the SAME shared valid net as phase_bank_0/valid_in
+# and util_ad9361_adc_pack/fifo_wr_en (NOT phase_bank_0/valid_out): the
+# established convention here treats dout_valid_0 as a continuous "pipe is
+# live" streaming enable, with each stage's fixed pipeline latency absorbed
+# silently because the stream has no gaps once the ADC is locked.
+ad_connect util_ad9361_adc_fifo/dout_valid_0 covar_bank_0/valid
 ad_connect util_ad9361_divclk/clk_out fir_bank_0/clk
 ad_connect util_ad9361_divclk/clk_out phase_bank_0/clk
-# END OF IQ_OVERRIDE, FIR BANK, and PHASE BANK
+ad_connect util_ad9361_divclk/clk_out covar_bank_0/clk
+# END OF IQ_OVERRIDE, FIR BANK, PHASE BANK, and COVAR BANK
 
 
 

@@ -43,6 +43,13 @@ add_files -norecurse -fileset sources_1 [list \
   "phase_rot.v" \
   "phase_bank.v" \
   "axi_phase_ctrl.v"]
+
+# Covariance-matrix accumulator + AXI control (MVDR part 1).
+# up_axi.v is NOT re-added here -- the FIR file group above already pulls it
+# into sources_1, and axi_covar_ctrl.v instantiates that same shim.
+add_files -norecurse -fileset sources_1 [list \
+  "covar_bank.v" \
+  "axi_covar_ctrl.v"]
 update_compile_order -fileset sources_1
 
 source ../common/fmcomms5_bd.tcl
@@ -69,6 +76,25 @@ ad_connect axi_phase_ctrl/b_bank1      phase_bank_0/b_bank1
 ad_connect axi_phase_ctrl/active_sel   phase_bank_0/active_sel
 ad_connect axi_phase_ctrl/coeff_frac_o phase_bank_0/coeff_frac
 ## PHASE CTRL
+
+## COVAR CTRL
+# 0x79090000 = next slot after PHG4 (0x79080000), continuing the
+# IQC8 / FIR8 / PHG4 / COV4 base-address sequence. Must stay in sync with
+# COVAR_BASE in covar_regmap.py.
+create_bd_cell -type module -reference axi_covar_ctrl axi_covar_ctrl
+ad_cpu_interconnect 0x79090000 axi_covar_ctrl
+ad_connect axi_covar_ctrl/enable_raw                 covar_bank_0/enable_raw
+ad_connect axi_covar_ctrl/rd_bank_sel                covar_bank_0/rd_bank_sel
+ad_connect axi_covar_ctrl/rd_word_sel                covar_bank_0/rd_word_sel
+ad_connect axi_covar_ctrl/rd_data                    covar_bank_0/rd_data
+# Status crossing back to the AXI domain: block_done_toggle is a single bit
+# (2-FF synchronized inside axi_covar_ctrl); latest_complete_bank/block_seq
+# are captured there only on a detected toggle edge, by which point they
+# have been stable in the sample-clock domain for many up_clk cycles.
+ad_connect axi_covar_ctrl/block_done_toggle          covar_bank_0/block_done_toggle
+ad_connect axi_covar_ctrl/latest_complete_bank_async covar_bank_0/latest_complete_bank
+ad_connect axi_covar_ctrl/block_seq_async            covar_bank_0/block_seq
+## COVAR CTRL
 
 
 # --- Runtime sample injector control (custom AXI-Lite slave) ---
