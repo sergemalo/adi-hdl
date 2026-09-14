@@ -243,10 +243,30 @@ module covar_bank #(
         end
     end
 
+    // BLOCK_SEQ counts 0 .. SEQ_LAST inclusive, then wraps to 0 -- i.e. its
+    // modulus is SEQ_LAST+1 = 0xFFFFFFFF, deliberately ONE SHORT of the
+    // natural 2^32.
+    //
+    // Why: software derives the completed bank as (block_seq - 1) mod
+    // NUM_BANKS instead of reading LATEST_COMPLETE_BANK, which removes a
+    // two-register race from the hot read loop. That derivation is only
+    // exact if the counter's modulus is a multiple of NUM_BANKS. 2^32 mod 3
+    // == 1, so a natural wrap would shift the derived index by one every
+    // ~49.7 days and force software to carry a calibration offset. 2^32 - 1
+    // = 0xFFFFFFFF = 3 x 1431655765 IS divisible by 3, so skipping that one
+    // value out of 4.3 billion makes the identity hold forever, with no
+    // software bookkeeping and no measurable loss of range or wrap period.
+    //
+    // Generalises: for any NUM_BANKS dividing 0xFFFFFFFF (3, 5, 15, 17, ...)
+    // this exact constant works. Revisit only if NUM_BANKS changes to a
+    // value that does not divide it.
+    localparam [31:0] SEQ_LAST = 32'hFFFF_FFFE;
+
     always @(posedge clk) begin
         if (block_done_d) begin
             latest_complete_bank <= write_ptr_d;
-            block_seq            <= block_seq + 1'b1;
+            block_seq            <= (block_seq == SEQ_LAST) ? 32'd0
+                                                            : block_seq + 1'b1;
             block_done_toggle    <= ~block_done_toggle;
         end
     end
