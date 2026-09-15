@@ -214,6 +214,21 @@ module covar_bank #(
     end
 
     // -------------------------------------------------------------------
+    // start_pending marks "the next accumulated sample begins a new block",
+    // so the accumulator LOADS that sample's product instead of adding to
+    // the previous block's total. Sticky, because valid_b may be low for
+    // some cycles after a block completes -- a one-cycle pulse would be
+    // missed and the new block would accumulate onto a stale total.
+    // -------------------------------------------------------------------
+    reg start_pending = 1'b1;          // power-on: first sample starts a block
+    always @(posedge clk) begin
+        if (rising_b)           start_pending <= ~valid_b;
+        else if (block_done_c)  start_pending <= 1'b1;
+        else if (valid_b)       start_pending <= 1'b0;
+    end
+    wire acc_start = start_pending | rising_b;
+
+    // -------------------------------------------------------------------
     // Bank storage + write pointer.
     // write_ptr advances at block_done_c; write_ptr_d holds the bank whose
     // data is written one cycle later (STAGE D). Status registers update at
@@ -285,31 +300,30 @@ module covar_bank #(
 
             reg signed [PART_ACC_WIDTH-1:0] acc_ii = 0, acc_qq = 0;
 
-            // Standard clear / hold / accumulate form -- DSP48E1 maps this
-            // to OPMODE-controlled P feedback. rising_b selects "start from
-            // this product" so the first sample of a block is never dropped.
-            wire signed [PART_ACC_WIDTH-1:0] next_ii =
-                rising_b ? (valid_b ? $signed(prod_ii_b) : $signed({PART_ACC_WIDTH{1'b0}}))
-                         : (valid_b ? acc_ii + prod_ii_b : acc_ii);
-            wire signed [PART_ACC_WIDTH-1:0] next_qq =
-                rising_b ? (valid_b ? $signed(prod_qq_b) : $signed({PART_ACC_WIDTH{1'b0}}))
-                         : (valid_b ? acc_qq + prod_qq_b : acc_qq);
-
-            reg signed [PART_ACC_WIDTH-1:0] fin_ii = 0, fin_qq = 0;
-
+            // Canonical DSP48E1 multiply-accumulate: a clock-enabled register
+            // whose input is EITHER the product alone (start of block) or
+            // product + itself. Vivado maps this to the DSP's own P register
+            // and ALU via OPMODE, so no fabric adder and no fabric register.
+            //
+            // The previous version exposed `next_*` -- the PRE-register sum --
+            // to a separate fin_* capture register. A DSP's accumulator output
+            // only exists AFTER the P register, so tapping the sum before it
+            // forced the adder into fabric: 32 x 48-bit adders plus 32 x 48
+            // flops. Reading the REGISTERED acc one cycle later instead costs
+            // nothing and lets the whole accumulate collapse into the DSP.
             always @(posedge clk) begin
-                acc_ii <= block_done_c ? $signed({PART_ACC_WIDTH{1'b0}}) : next_ii;
-                acc_qq <= block_done_c ? $signed({PART_ACC_WIDTH{1'b0}}) : next_qq;
-                if (block_done_c) begin
-                    fin_ii <= next_ii;      // completed block, incl. this sample
-                    fin_qq <= next_qq;
+                if (valid_b) begin
+                    acc_ii <= acc_start ? $signed(prod_ii_b) : acc_ii + prod_ii_b;
+                    acc_qq <= acc_start ? $signed(prod_qq_b) : acc_qq + prod_qq_b;
                 end
             end
 
-            // STAGE D: one adder, both operands straight off flops.
+            // STAGE D: at block_done_d the accumulators still hold the
+            // completed block's totals (the new block's first sample is
+            // loaded on THIS same edge), so one adder off two registers.
             always @(posedge clk)
                 if (block_done_d)
-                    bank_mem[write_ptr_d][ch] <= fin_ii + fin_qq;
+                    bank_mem[write_ptr_d][ch] <= acc_ii + acc_qq;
         end
     endgenerate
 
@@ -345,38 +359,22 @@ module covar_bank #(
                 reg signed [PART_ACC_WIDTH-1:0] acc_re1 = 0, acc_re2 = 0,
                                                 acc_im1 = 0, acc_im2 = 0;
 
-                wire signed [PART_ACC_WIDTH-1:0] next_re1 =
-                    rising_b ? (valid_b ? $signed(prod_re1_b) : $signed({PART_ACC_WIDTH{1'b0}}))
-                             : (valid_b ? acc_re1 + prod_re1_b : acc_re1);
-                wire signed [PART_ACC_WIDTH-1:0] next_re2 =
-                    rising_b ? (valid_b ? $signed(prod_re2_b) : $signed({PART_ACC_WIDTH{1'b0}}))
-                             : (valid_b ? acc_re2 + prod_re2_b : acc_re2);
-                wire signed [PART_ACC_WIDTH-1:0] next_im1 =
-                    rising_b ? (valid_b ? $signed(prod_im1_b) : $signed({PART_ACC_WIDTH{1'b0}}))
-                             : (valid_b ? acc_im1 + prod_im1_b : acc_im1);
-                wire signed [PART_ACC_WIDTH-1:0] next_im2 =
-                    rising_b ? (valid_b ? $signed(prod_im2_b) : $signed({PART_ACC_WIDTH{1'b0}}))
-                             : (valid_b ? acc_im2 + prod_im2_b : acc_im2);
-
-                reg signed [PART_ACC_WIDTH-1:0] fin_re1 = 0, fin_re2 = 0,
-                                                fin_im1 = 0, fin_im2 = 0;
-
+                // Canonical DSP48E1 MACC -- see the diagonal block above for
+                // why the pre-register sum must not be tapped.
                 always @(posedge clk) begin
-                    acc_re1 <= block_done_c ? $signed({PART_ACC_WIDTH{1'b0}}) : next_re1;
-                    acc_re2 <= block_done_c ? $signed({PART_ACC_WIDTH{1'b0}}) : next_re2;
-                    acc_im1 <= block_done_c ? $signed({PART_ACC_WIDTH{1'b0}}) : next_im1;
-                    acc_im2 <= block_done_c ? $signed({PART_ACC_WIDTH{1'b0}}) : next_im2;
-                    if (block_done_c) begin
-                        fin_re1 <= next_re1;  fin_re2 <= next_re2;
-                        fin_im1 <= next_im1;  fin_im2 <= next_im2;
+                    if (valid_b) begin
+                        acc_re1 <= acc_start ? $signed(prod_re1_b) : acc_re1 + prod_re1_b;
+                        acc_re2 <= acc_start ? $signed(prod_re2_b) : acc_re2 + prod_re2_b;
+                        acc_im1 <= acc_start ? $signed(prod_im1_b) : acc_im1 + prod_im1_b;
+                        acc_im2 <= acc_start ? $signed(prod_im2_b) : acc_im2 + prod_im2_b;
                     end
                 end
 
-                // STAGE D: one adder each, both operands straight off flops.
+                // STAGE D: one adder each, both operands off the accumulators.
                 always @(posedge clk) begin
                     if (block_done_d) begin
-                        bank_mem[write_ptr_d][VRE] <= fin_re1 + fin_re2;
-                        bank_mem[write_ptr_d][VIM] <= fin_im1 - fin_im2;
+                        bank_mem[write_ptr_d][VRE] <= acc_re1 + acc_re2;
+                        bank_mem[write_ptr_d][VIM] <= acc_im1 - acc_im2;
                     end
                 end
             end

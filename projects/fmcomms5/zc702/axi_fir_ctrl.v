@@ -238,33 +238,95 @@ module axi_fir_ctrl #(
     end
   end
 
-  // read path. Runtime-indexed read of the flop array (a big mux); the
-  // tap/channel range checks make an out-of-range address read back 0.
+  // ---------------------------------------------------------------------
+  // read path -- TWO-STAGE MUX.
+  //
+  // The single-stage version indexed the whole TOTAL_COEFF-entry flop array
+  // at once: a 336-way mux (8 channels x 21 taps x 2 banks) collapsing into
+  // up_rdata in one cycle. It timed at 7 logic levels with MUXF7/MUXF8 and,
+  // worse, 73% ROUTE delay -- the coefficient flops are spread across the
+  // die, so every one of them had to reach a single mux. It closed at
+  // +0.163 ns before covar_bank was added and went NEGATIVE (-0.061 ns) once
+  // the extra logic pushed slice occupancy to 90%, even though not one gate
+  // was added to this clock domain.
+  //
+  // Now split by the structure of the array:
+  //   STAGE 1  per channel, select the tap  (NUM_COEFF-way, both banks).
+  //            Each of these muxes reads ONLY its own channel's flops, so it
+  //            can be placed local to them -- this is the part that fixes the
+  //            route delay, not just the logic depth.
+  //   STAGE 2  select the channel and bank  (NUM_CHANNELS-way) and merge with
+  //            the global control registers.
+  //
+  // Costs 2*NUM_CHANNELS*COEFF_WIDTH extra flops (288 at the default
+  // parameters) and one extra cycle of read latency. up_axi holds up_raddr
+  // stable for the whole transaction and allows ~16 cycles before its
+  // timeout (up_rcount), so a 2-cycle ack is well within the protocol.
+  // ---------------------------------------------------------------------
   wire rd_coeff_valid = rd_coeff_region &&
                         (rd_tap  < NUM_COEFF) &&
                         (rd_chan < NUM_CHANNELS);
-  wire [$clog2(TOTAL_COEFF>1?TOTAL_COEFF:2)-1:0] rd_index = rd_chan*NUM_COEFF + rd_tap;
 
+  // Clamp the tap index: rd_tap can address up to 32 while only NUM_COEFF
+  // entries exist. rd_coeff_valid still forces the read to 0, but the index
+  // must stay in range so stage 1 never reads past the array.
+  wire [4:0] rd_tap_c = (rd_tap < NUM_COEFF) ? rd_tap : 5'd0;
+
+  reg [COEFF_WIDTH-1:0] rd_tapsel0 [0:NUM_CHANNELS-1];
+  reg [COEFF_WIDTH-1:0] rd_tapsel1 [0:NUM_CHANNELS-1];
+  reg [13:0]            rd_addr_s1  = 14'd0;
+  reg                   rd_valid_s1 = 1'b0;
+  reg                   rd_bank_s1  = 1'b0;
+  reg [ 2:0]            rd_chan_s1  = 3'd0;
+  reg                   up_rreq_s1  = 1'b0;
+
+  integer si;
+  initial begin
+    for (si = 0; si < NUM_CHANNELS; si = si + 1) begin
+      rd_tapsel0[si] = {COEFF_WIDTH{1'b0}};
+      rd_tapsel1[si] = {COEFF_WIDTH{1'b0}};
+    end
+  end
+
+  // STAGE 1 -- per-channel tap select
+  always @(posedge up_clk) begin
+    if (up_rstn == 1'b0) begin
+      up_rreq_s1  <= 1'b0;
+      rd_valid_s1 <= 1'b0;
+    end else begin
+      for (si = 0; si < NUM_CHANNELS; si = si + 1) begin
+        rd_tapsel0[si] <= up_coeff0[si*NUM_COEFF + rd_tap_c];
+        rd_tapsel1[si] <= up_coeff1[si*NUM_COEFF + rd_tap_c];
+      end
+      rd_addr_s1  <= up_raddr;
+      rd_valid_s1 <= rd_coeff_valid;
+      rd_bank_s1  <= rd_bank;
+      rd_chan_s1  <= rd_chan;
+      up_rreq_s1  <= up_rreq;
+    end
+  end
+
+  // STAGE 2 -- channel/bank select, merged with the control registers
   always @(posedge up_clk) begin
     if (up_rstn == 1'b0) begin
       up_rack  <= 1'b0;
       up_rdata <= 32'd0;
     end else begin
-      up_rack <= up_rreq;
+      up_rack <= up_rreq_s1;
 
-      if (up_rreq == 1'b1) begin
-        if (up_raddr == 14'h000) begin
+      if (up_rreq_s1 == 1'b1) begin
+        if (rd_addr_s1 == 14'h000) begin
           up_rdata <= ID_VALUE;
-        end else if (up_raddr == 14'h001) begin
+        end else if (rd_addr_s1 == 14'h001) begin
           up_rdata <= up_scratch;
-        end else if (up_raddr == 14'h002) begin
+        end else if (rd_addr_s1 == 14'h002) begin
           up_rdata <= {27'd0, up_coeff_frac};
-        end else if (up_raddr == 14'h003) begin
+        end else if (rd_addr_s1 == 14'h003) begin
           up_rdata <= {31'd0, up_active_sel};
-        end else if (rd_coeff_valid && (rd_bank == 1'b0)) begin
-          up_rdata <= {{(32-COEFF_WIDTH){1'b0}}, up_coeff0[rd_index]};
-        end else if (rd_coeff_valid && (rd_bank == 1'b1)) begin
-          up_rdata <= {{(32-COEFF_WIDTH){1'b0}}, up_coeff1[rd_index]};
+        end else if (rd_valid_s1 && (rd_bank_s1 == 1'b0)) begin
+          up_rdata <= {{(32-COEFF_WIDTH){1'b0}}, rd_tapsel0[rd_chan_s1]};
+        end else if (rd_valid_s1 && (rd_bank_s1 == 1'b1)) begin
+          up_rdata <= {{(32-COEFF_WIDTH){1'b0}}, rd_tapsel1[rd_chan_s1]};
         end else begin
           up_rdata <= 32'd0;
         end
