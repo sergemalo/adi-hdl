@@ -57,7 +57,13 @@ add_files -norecurse -fileset sources_1 [list \
   "axi_covar_ctrl.v"]
 update_compile_order -fileset sources_1
 
-# BF
+# BF (BFW4 beamformer, MVDR Part 4). up_axi.v already added above.
+add_files -norecurse -fileset sources_1 [list \
+  "bf_bank.v" \
+  "bf_dac_if.v" \
+  "bf_capture.v" \
+  "axi_bf_ctrl.v"]
+update_compile_order -fileset sources_1
 
 ################################################
 ## Include the common FMCOMMS5 block design
@@ -119,6 +125,23 @@ ad_connect axi_covar_ctrl/latest_complete_bank_async covar_bank_0/latest_complet
 ad_connect axi_covar_ctrl/block_seq_async            covar_bank_0/block_seq
 
 # BF CTRL
+# 0x790A0000 = next slot after COV4. Must match bf_regmap.py.
+create_bd_cell -type module -reference axi_bf_ctrl axi_bf_ctrl
+ad_cpu_interconnect 0x790A0000 axi_bf_ctrl
+ad_connect axi_bf_ctrl/w_bank0      bf_bank_0/w_bank0
+ad_connect axi_bf_ctrl/w_bank1      bf_bank_0/w_bank1
+ad_connect axi_bf_ctrl/shift_bank0  bf_bank_0/shift_bank0
+ad_connect axi_bf_ctrl/shift_bank1  bf_bank_0/shift_bank1
+ad_connect axi_bf_ctrl/active_sel   bf_bank_0/active_sel
+ad_connect axi_bf_ctrl/tx_src       bf_dac_if_0/tx_src
+ad_connect axi_bf_ctrl/capture_sel  bf_capture_0/capture_sel
+# status into the AXI domain (2-FF synchronised in axi_bf_ctrl)
+ad_connect bf_dac_if_0/sat_toggle   axi_bf_ctrl/sat_toggle
+ad_connect bf_dac_if_0/ovf_toggle   axi_bf_ctrl/ovf_toggle
+ad_connect bf_dac_if_0/unf_toggle   axi_bf_ctrl/unf_toggle
+ad_connect bf_dac_if_0/primed       axi_bf_ctrl/fifo_primed
+ad_connect axi_ad9361_0/dac_enable_i1 axi_bf_ctrl/dac_enable_i
+ad_connect axi_ad9361_0/dac_enable_q1 axi_bf_ctrl/dac_enable_q
 
 
 ## Extra parameters

@@ -200,15 +200,30 @@ ad_connect phase_rstn/dout phase_bank_0/rstn
 # overrides are needed -- same as phase_bank_0, unlike fir_bank_0.
 create_bd_cell -type module -reference covar_bank covar_bank_0
 
-# ADC path: FIFO -> iq_override -> fir_bank -> phase_bank -> pack (all 8 lanes)
-#                                                  \-> covar_bank (tap only)
+# BFW4 beamformer (MVDR Part 4). Three datapath cells, all tapping
+# phase_bank_0 in parallel with covar_bank (D1: same samples as R):
+#   bf_bank_0     4-channel weight-apply, 16 DSP48, divclk
+#   bf_capture_0  debug mux on the PACK path only, AFTER the covar tap:
+#                 transparent unless axi_bf_ctrl CAPTURE_SEL != 0
+#   bf_dac_if_0   FIFO divclk -> l_clk, feeds axi_ad9361_0 TX2 (TX2A_A)
+# No reset ports (power-up state via `initial`). Control: axi_bf_ctrl in
+# system_bd.tcl.
+create_bd_cell -type module -reference bf_bank    bf_bank_0
+create_bd_cell -type module -reference bf_capture bf_capture_0
+create_bd_cell -type module -reference bf_dac_if  bf_dac_if_0
+
+# ADC path: FIFO -> iq_override -> fir_bank -> phase_bank -> bf_capture -> pack
+#                                                  |-> covar_bank (tap)
+#                                                  \-> bf_bank    (tap)
 for {set i 0} {$i < 8} {incr i} {
   ad_connect util_ad9361_adc_fifo/dout_enable_$i util_ad9361_adc_pack/enable_$i
   ad_connect util_ad9361_adc_fifo/dout_data_$i   iq_override_0/din_$i
   ad_connect iq_override_0/dout_$i               fir_bank_0/din_$i
   ad_connect fir_bank_0/dout_fir_$i              phase_bank_0/din_$i
-  ad_connect phase_bank_0/dout_$i                util_ad9361_adc_pack/fifo_wr_data_$i
+  ad_connect phase_bank_0/dout_$i                bf_capture_0/din_$i
+  ad_connect bf_capture_0/dout_$i                util_ad9361_adc_pack/fifo_wr_data_$i
   ad_connect phase_bank_0/dout_$i                covar_bank_0/din_$i
+  ad_connect phase_bank_0/dout_$i                bf_bank_0/din_$i
   ad_connect util_ad9361_adc_fifo/dout_valid_$i  fir_bank_0/valid_$i
 }
 ad_connect util_ad9361_adc_fifo/dout_valid_0 iq_override_0/valid
@@ -222,7 +237,22 @@ ad_connect util_ad9361_adc_fifo/dout_valid_0 covar_bank_0/valid
 ad_connect util_ad9361_divclk/clk_out fir_bank_0/clk
 ad_connect util_ad9361_divclk/clk_out phase_bank_0/clk
 ad_connect util_ad9361_divclk/clk_out covar_bank_0/clk
-# END OF IQ_OVERRIDE, FIR BANK, PHASE BANK, and COVAR BANK
+
+# bf_bank valid: phase_bank_0/valid_out, NOT the shared dout_valid_0. The
+# DAC FIFO pushes one word per valid output, so valid must be aligned with
+# the data it marks; identical to the shared net once the stream runs.
+ad_connect phase_bank_0/valid_out              bf_bank_0/valid_in
+ad_connect util_ad9361_divclk/clk_out          bf_bank_0/clk
+ad_connect util_ad9361_divclk/clk_out          bf_capture_0/clk
+ad_connect util_ad9361_divclk/clk_out          bf_dac_if_0/clk_s
+ad_connect axi_ad9361_0/l_clk                  bf_dac_if_0/clk_d
+ad_connect bf_bank_0/valid_out                 bf_dac_if_0/valid_s
+ad_connect bf_bank_0/dout_i                    bf_dac_if_0/din_i
+ad_connect bf_bank_0/dout_q                    bf_dac_if_0/din_q
+ad_connect bf_bank_0/sat_out                   bf_dac_if_0/sat_s
+ad_connect bf_bank_0/dout_i                    bf_capture_0/bf_i
+ad_connect bf_bank_0/dout_q                    bf_capture_0/bf_q
+# END OF IQ_OVERRIDE, FIR BANK, PHASE BANK, COVAR BANK and BF
 
 
 
@@ -259,12 +289,18 @@ ad_connect axi_ad9361_dac_fifo/dout_data_0 axi_ad9361_0/dac_data_i0
 ad_connect axi_ad9361_dac_fifo/dout_enable_1 axi_ad9361_0/dac_enable_q0
 ad_connect axi_ad9361_dac_fifo/dout_valid_1 axi_ad9361_0/dac_valid_q0
 ad_connect axi_ad9361_dac_fifo/dout_data_1 axi_ad9361_0/dac_data_q0
-ad_connect axi_ad9361_dac_fifo/dout_enable_2 axi_ad9361_0/dac_enable_i1
-ad_connect axi_ad9361_dac_fifo/dout_valid_2 axi_ad9361_0/dac_valid_i1
-ad_connect axi_ad9361_dac_fifo/dout_data_2 axi_ad9361_0/dac_data_i1
-ad_connect axi_ad9361_dac_fifo/dout_enable_3 axi_ad9361_0/dac_enable_q1
-ad_connect axi_ad9361_dac_fifo/dout_valid_3 axi_ad9361_0/dac_valid_q1
-ad_connect axi_ad9361_dac_fifo/dout_data_3 axi_ad9361_0/dac_data_q1
+# Chip A TX2 (TX2A_A) is fed by the beamformer, never by DMA. rfifo channels
+# 2/3 see enable = valid = 0, so upack never unpacks them.
+# INVARIANT: TX DMA buffers may enable voltage0/1 only (stream_tx/argus).
+# axi_ad9361_0/dac_enable_i1/q1 (DATA_SEL == DMA) go to axi_bf_ctrl STATUS
+# in system_bd.tcl; dac_valid_q1 is identical to dac_valid_i1 and unused.
+ad_connect GND                                axi_ad9361_dac_fifo/dout_enable_2
+ad_connect GND                                axi_ad9361_dac_fifo/dout_valid_2
+ad_connect GND                                axi_ad9361_dac_fifo/dout_enable_3
+ad_connect GND                                axi_ad9361_dac_fifo/dout_valid_3
+ad_connect axi_ad9361_0/dac_valid_i1          bf_dac_if_0/dac_valid
+ad_connect bf_dac_if_0/dac_data_i             axi_ad9361_0/dac_data_i1
+ad_connect bf_dac_if_0/dac_data_q             axi_ad9361_0/dac_data_q1
 ad_connect axi_ad9361_dac_fifo/dout_enable_4 axi_ad9361_1/dac_enable_i0
 ad_connect axi_ad9361_dac_fifo/dout_valid_4 axi_ad9361_1/dac_valid_i0
 ad_connect axi_ad9361_dac_fifo/dout_data_4 axi_ad9361_1/dac_data_i0
