@@ -125,7 +125,7 @@ ad_connect axi_covar_ctrl/latest_complete_bank_async covar_bank_0/latest_complet
 ad_connect axi_covar_ctrl/block_seq_async            covar_bank_0/block_seq
 
 # BF CTRL
-# 0x790A0000 = next slot after COV4. Must match bf_regmap.py.
+# 0x790A0000 = next slot after COV4. Must match argus/regmap.py (BF_CTRL).
 create_bd_cell -type module -reference axi_bf_ctrl axi_bf_ctrl
 ad_cpu_interconnect 0x790A0000 axi_bf_ctrl
 ad_connect axi_bf_ctrl/w_bank0      bf_bank_0/w_bank0
@@ -133,13 +133,19 @@ ad_connect axi_bf_ctrl/w_bank1      bf_bank_0/w_bank1
 ad_connect axi_bf_ctrl/shift_bank0  bf_bank_0/shift_bank0
 ad_connect axi_bf_ctrl/shift_bank1  bf_bank_0/shift_bank1
 ad_connect axi_bf_ctrl/active_sel   bf_bank_0/active_sel
-ad_connect axi_bf_ctrl/tx_src       bf_dac_if_0/tx_src
-ad_connect axi_bf_ctrl/capture_sel  bf_capture_0/capture_sel
+ad_connect axi_bf_ctrl/out_en         bf_dac_if_0/out_en
+ad_connect axi_bf_ctrl/capture_sel    bf_capture_0/capture_sel
 # status into the AXI domain (2-FF synchronised in axi_bf_ctrl)
-ad_connect bf_dac_if_0/sat_toggle   axi_bf_ctrl/sat_toggle
-ad_connect bf_dac_if_0/ovf_toggle   axi_bf_ctrl/ovf_toggle
-ad_connect bf_dac_if_0/unf_toggle   axi_bf_ctrl/unf_toggle
-ad_connect bf_dac_if_0/primed       axi_bf_ctrl/fifo_primed
+ad_connect bf_dac_if_0/sat_toggle     axi_bf_ctrl/sat_toggle
+ad_connect bf_dac_if_0/unf_toggle     axi_bf_ctrl/unf_toggle
+ad_connect bf_dac_if_0/slip_r_toggle  axi_bf_ctrl/slip_r_toggle
+ad_connect bf_dac_if_0/ovf_toggle     axi_bf_ctrl/ovf_toggle
+ad_connect bf_dac_if_0/slip_w_toggle  axi_bf_ctrl/slip_w_toggle
+ad_connect bf_dac_if_0/running        axi_bf_ctrl/running
+ad_connect bf_dac_if_0/armed_r        axi_bf_ctrl/armed_r
+ad_connect bf_dac_if_0/armed_w        axi_bf_ctrl/armed_w
+ad_connect bf_dac_if_0/level_min      axi_bf_ctrl/level_min
+ad_connect bf_dac_if_0/level_max      axi_bf_ctrl/level_max
 ad_connect axi_ad9361_0/dac_enable_i1 axi_bf_ctrl/dac_enable_i
 ad_connect axi_ad9361_0/dac_enable_q1 axi_bf_ctrl/dac_enable_q
 
