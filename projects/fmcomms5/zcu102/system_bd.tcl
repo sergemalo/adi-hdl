@@ -33,6 +33,20 @@
 ###############################################################################
 
 source $ad_hdl_dir/projects/common/zcu102/zcu102_system_bd.tcl
+
+# RnP P2: PS-GTR lanes 0-3 -> PCIe Gen2 x4 Root Port. Frees DP (lane 1), USB3_0 (lane 2), SATA (lane 3).
+# USB0 stays as USB 2.0 on MIO 52..63. Property names/values from ps8_gtr_props.txt (P2.0).
+set_property -dict [list \
+  CONFIG.PSU__DISPLAYPORT__PERIPHERAL__ENABLE {0} \
+  CONFIG.PSU__DPAUX__PERIPHERAL__ENABLE {0} \
+  CONFIG.PSU__SATA__PERIPHERAL__ENABLE {0} \
+  CONFIG.PSU__USB3_0__PERIPHERAL__ENABLE {0} \
+  CONFIG.PSU__PCIE__MAXIMUM_LINK_WIDTH {x4} \
+  CONFIG.PSU__PCIE__LANE1__ENABLE {1} CONFIG.PSU__PCIE__LANE1__IO {GT Lane1} \
+  CONFIG.PSU__PCIE__LANE2__ENABLE {1} CONFIG.PSU__PCIE__LANE2__IO {GT Lane2} \
+  CONFIG.PSU__PCIE__LANE3__ENABLE {1} CONFIG.PSU__PCIE__LANE3__IO {GT Lane3} \
+] [get_bd_cells sys_ps8]
+
 source ../common/fmcomms5_bd.tcl
 source $ad_hdl_dir/projects/scripts/adi_pd.tcl
 
