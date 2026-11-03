@@ -1,0 +1,5 @@
+boot_v1b/
+build_boot_bin_py/
+kuiper-original/
+BOOT.BIN.BAK
+bootgen_sysfiles*
