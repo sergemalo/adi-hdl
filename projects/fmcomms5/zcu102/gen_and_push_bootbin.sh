@@ -39,3 +39,4 @@ bootgen -arch zynqmp -image zynq.bif -o BOOT.BIN -w
 # Step 5: Copyt to the board
 scp BOOT.BIN root@10.0.0.125:/boot/BOOT.BIN
 
+cd ..
