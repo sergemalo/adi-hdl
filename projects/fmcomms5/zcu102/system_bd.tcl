@@ -63,3 +63,15 @@ ad_ip_parameter axi_ad9361_1 CONFIG.ADC_INIT_DELAY 8
 ad_ip_parameter axi_ad9361_1 CONFIG.DELAY_REFCLK_FREQUENCY 500
 
 ad_ip_parameter util_ad9361_divclk CONFIG.SIM_DEVICE ULTRASCALE
+
+# RnP ARGUS-97: the RX and TX DMAs buffer 32 bursts of 2 KiB (64 KiB) instead of
+# 8 x 128 B (1 KiB, the axi_dmac defaults fmcomms5_bd.tcl keeps). At 61.44 MSPS
+# 2R2T (983 MB/s) 1 KiB rides out a memory stall of 0.9 us (RX) or 0.76 us (TX);
+# on the board, with the CPU busy, RX lost 1-10 samples inside DMA blocks 15
+# times in 60 s (r97_rung1e R4). 64 KiB rides out about 65 us
+# (sim/run_dmac_stall_sims.sh). 2048 B is the AXI4 limit at 64 bits (256 beats);
+# 32 is the largest FIFO_SIZE axi_dmac accepts.
+foreach dma {axi_ad9361_adc_dma axi_ad9361_dac_dma} {
+  ad_ip_parameter $dma CONFIG.FIFO_SIZE 32
+  ad_ip_parameter $dma CONFIG.MAX_BYTES_PER_BURST 2048
+}
